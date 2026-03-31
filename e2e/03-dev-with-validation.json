@@ -1,0 +1,34 @@
+{
+    "title": "E2E: Dev cycle — FizzBuzz with tests and validation loop",
+    "body": "Write a Python module fizzbuzz.py with a function fizzbuzz(n) that returns 'Fizz' for multiples of 3, 'Buzz' for multiples of 5, 'FizzBuzz' for both, and str(n) otherwise. Also write test_fizzbuzz.py with pytest tests covering all cases. Both files go in the working directory.",
+    "cwd": "{CWD}",
+    "cycle": [
+        {
+            "id": "plan",
+            "type": "llm",
+            "prompt": "Plan the implementation. List the exact files to create, functions to write, and test cases to cover. Be specific.",
+            "model_spec": "sonnet@claude"
+        },
+        {
+            "id": "implement",
+            "type": "llm",
+            "prompt": "Implement the plan from the previous step. Write all files to disk using the Write tool. Do NOT over-engineer.",
+            "model_spec": "sonnet@claude",
+            "next": "validate"
+        },
+        {
+            "id": "fix",
+            "type": "llm",
+            "prompt": "Fix the validation errors shown below. Read the error output carefully and make the minimum change needed.",
+            "model_spec": "sonnet@claude",
+            "next": "validate"
+        },
+        {
+            "id": "validate",
+            "type": "command",
+            "commands": ["python -m pytest test_fizzbuzz.py -v"],
+            "on_fail": "fix"
+        }
+    ],
+    "max_retries": 3
+}

@@ -1,0 +1,10 @@
+# TAO — The Agnostic Orchestrator
+# Background service config. Run with: tao serve --http
+
+[engine]
+db_path = ".tao/engine.db"
+max_concurrent = 2
+
+[providers.claude]
+type = "claude_cli"
+models = { opus = "opus", sonnet = "sonnet", haiku = "haiku" }

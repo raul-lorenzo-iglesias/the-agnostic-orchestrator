@@ -1,0 +1,36 @@
+{
+    "title": "E2E R2: Dev incremental — TaskQueue in 3 phases",
+    "body": "Build a TaskQueue class incrementally in task_queue.py with tests in test_task_queue.py.\n\nPhase 1 — Basic queue: enqueue(item), dequeue() -> item, peek() -> item, is_empty() -> bool, size() -> int. dequeue/peek on empty queue raise IndexError.\n\nPhase 2 — Priority support: enqueue(item, priority=0) where higher priority dequeues first. Items with same priority follow FIFO order. Update existing tests + add priority-specific tests.\n\nPhase 3 — Capacity limit: __init__(max_size=None), is_full() -> bool, enqueue raises OverflowError when full. Add timeout parameter to enqueue(item, priority=0, timeout=None) that waits up to timeout seconds before raising TimeoutError. Update existing tests + add capacity tests.\n\nEach phase MUST read the existing code first and extend it — do NOT rewrite from scratch. All files in the working directory.",
+    "cwd": "{CWD}",
+    "scope": {"model_spec": "sonnet@claude"},
+    "cycle": [
+        {
+            "id": "plan",
+            "type": "llm",
+            "prompt": "Plan the changes for this phase. Read existing code first. List specific modifications to make.",
+            "model_spec": "sonnet@claude"
+        },
+        {
+            "id": "implement",
+            "type": "llm",
+            "prompt": "Implement the planned changes. Read existing files before modifying. Use Edit tool for modifications, Write tool for new files.",
+            "model_spec": "sonnet@claude",
+            "next": "validate"
+        },
+        {
+            "id": "fix",
+            "type": "llm",
+            "prompt": "Fix the validation errors. Read the existing code and error output. Make minimum changes.",
+            "model_spec": "sonnet@claude",
+            "next": "validate"
+        },
+        {
+            "id": "validate",
+            "type": "command",
+            "commands": ["python -m pytest test_task_queue.py -v"],
+            "on_fail": "fix"
+        }
+    ],
+    "max_retries": 3,
+    "policies": {"batch_size": 3, "max_iterations": 3}
+}

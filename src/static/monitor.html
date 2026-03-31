@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Agnostic Orchestrator</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: #0d1117; color: #e6edf3; font-family: Consolas, Monaco, 'Courier New', monospace; font-size: 14px; display: flex; flex-direction: column; }
+
+/* Header */
+.header { padding: 14px 24px; border-bottom: 1px solid #30363d; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.header h1 { font-size: 18px; font-weight: 600; letter-spacing: 1px; }
+.header .version { color: #8b949e; font-size: 13px; }
+.header .right { margin-left: auto; display: flex; align-items: center; gap: 14px; font-size: 13px; }
+.header .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.header .dot.ok { background: #3fb950; } .header .dot.err { background: #f85149; }
+.queue-bar { display: flex; gap: 3px; align-items: center; }
+.queue-block { width: 14px; height: 14px; border-radius: 2px; }
+.queue-block.active { background: #58a6ff; } .queue-block.empty { background: #30363d; }
+.last-updated { color: #484f58; font-size: 11px; }
+
+/* Banner */
+.banner { padding: 10px 24px; background: #f8514922; color: #f85149; border-bottom: 1px solid #f8514944; display: none; font-size: 13px; }
+.banner.visible { display: block; }
+
+/* Layout */
+.page { max-width: 1440px; margin: 0 auto; padding: 0 24px; flex: 1; display: flex; flex-direction: column; }
+.section-title { font-size: 11px; font-weight: 600; color: #8b949e; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px; margin-top: 14px; }
+
+
+/* Filter tabs */
+.filter-tabs { display: flex; gap: 2px; margin-bottom: 6px; }
+.filter-tab { padding: 5px 12px; border-radius: 4px; font-size: 11px; color: #8b949e; cursor: pointer; transition: background 0.15s, color 0.15s; background: transparent; border: none; font-family: inherit; letter-spacing: 0.5px; display: flex; align-items: center; gap: 5px; }
+.filter-tab:hover { background: #21262d; color: #e6edf3; }
+.filter-tab.active { background: #21262d; color: #e6edf3; }
+.filter-tab .count { font-variant-numeric: tabular-nums; }
+.filter-tab .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+
+/* Charts row */
+.charts-row { display: flex; gap: 10px; margin-top: 16px; }
+.chart-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 14px 16px; }
+.chart-card.donut-card { flex: 0 0 260px; display: flex; flex-direction: column; align-items: center; }
+.chart-card.timeline-card { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.chart-title { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 10px; align-self: flex-start; }
+.chart-fallback { color: #484f58; padding: 40px 0; text-align: center; font-size: 12px; }
+.timeline-wrap { position: relative; flex: 1; min-height: 160px; }
+.chart-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.chart-header .chart-title { margin-bottom: 0; }
+.act-btns { display: flex; gap: 2px; }
+.act-btn { padding: 2px 8px; border-radius: 3px; font-size: 10px; color: #8b949e; cursor: pointer; background: transparent; border: 1px solid transparent; font-family: inherit; transition: all 0.15s; }
+.act-btn:hover { color: #e6edf3; background: #21262d; }
+.act-btn.active { color: #e6edf3; background: #21262d; border-color: #30363d; }
+.donut-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 10px; font-size: 11px; color: #8b949e; }
+.donut-legend-item { display: flex; align-items: center; gap: 4px; }
+.donut-legend-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+
+/* Main grid */
+.main { display: grid; grid-template-columns: minmax(420px, 420px) 1fr; grid-template-rows: auto 1fr; gap: 6px 16px; margin-top: 12px; padding-bottom: 24px; flex: 1; min-height: 0; width: 1280px; }
+.main.single-col { grid-template-columns: 1fr auto; }
+.main.single-col .col-right-content { display: none; }
+.col-left-bar { grid-column: 1; grid-row: 1; }
+.col-left-content { grid-column: 1; grid-row: 2; min-height: 0; }
+.main.single-col .col-left-content { grid-column: 1 / -1; }
+.col-right-bar { grid-column: 2; grid-row: 1; display: flex; align-items: center; justify-content: flex-end; }
+.col-right-content { grid-column: 2; grid-row: 2; display: flex; flex-direction: column; min-height: 0; }
+
+/* Task list */
+.task-list { list-style: none; max-height: calc(100vh - 540px); min-height: 100px; overflow-y: auto; }
+.task-item { padding: 8px 10px; border: 1px solid #30363d; border-radius: 6px; margin-bottom: 3px; cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+.task-row { display: flex; align-items: center; gap: 10px; }
+.task-meta { font-size: 11px; color: #484f58; margin-top: 3px; padding-left: 42px; }
+.task-meta:empty { display: none; }
+.task-meta { font-size: 11px; color: #8b949e; margin-top: 8px; padding: 4px 8px; background: #0d1117; border-radius: 4px; margin-left: 42px; }
+.task-item:hover { background: #161b22; }
+.task-item.selected { background: #161b22; border-color: #58a6ff; }
+.task-id { color: #8b949e; min-width: 32px; text-align: right; font-size: 12px; }
+.task-title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+.task-status { font-size: 11px; display: flex; align-items: center; gap: 4px; min-width: 80px; }
+.task-status .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; transition: background 0.3s; }
+.task-time { color: #8b949e; font-size: 11px; min-width: 80px; text-align: right; }
+.empty-msg { color: #484f58; padding: 24px; text-align: center; font-size: 12px; }
+
+/* Status colors */
+.s-queued .dot { background: #8b949e; }    .s-queued { color: #8b949e; }
+.s-running .dot { background: #58a6ff; }   .s-running { color: #58a6ff; }
+.s-completed .dot { background: #3fb950; } .s-completed { color: #3fb950; }
+.s-failed .dot { background: #f85149; }    .s-failed { color: #f85149; }
+.s-blocked .dot { background: #d29922; }   .s-blocked { color: #d29922; }
+.s-stopped .dot { background: #484f58; }   .s-stopped { color: #484f58; }
+
+/* Detail panel */
+.detail { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px 16px 120px 16px; display: none; overflow-y: auto; flex: 1; }
+.detail.visible { display: flex; flex-direction: column; }
+.detail-placeholder { color: #484f58; padding: 48px 24px; text-align: center; font-size: 12px; }
+.detail-header { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.detail-header h2 { font-size: 14px; font-weight: 600; }
+.detail-meta { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: #8b949e; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #30363d; }
+.detail-body { font-size: 12px; color: #8b949e; margin-bottom: 10px; white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow-y: auto; }
+.detail-body:empty { display: none; }
+.blocked-reason { background: #d2992222; border: 1px solid #d2992244; border-radius: 4px; padding: 8px 10px; margin-bottom: 10px; color: #d29922; font-size: 12px; }
+.blocked-reason:empty { display: none; }
+
+/* Subtask list */
+.subtask-list { list-style: none; margin: 0 0 12px 0; }
+.subtask-item { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 4px; font-size: 12px; }
+.subtask-item:hover { background: #21262d; }
+.subtask-icon { font-size: 11px; flex-shrink: 0; width: 14px; text-align: center; }
+.subtask-icon.done { color: #3fb950; }
+.subtask-icon.running { color: #58a6ff; }
+.subtask-icon.failed { color: #f85149; }
+.subtask-icon.pending { color: #484f58; }
+.subtask-idx { color: #484f58; font-size: 11px; min-width: 16px; }
+.subtask-title { flex: 1; }
+.subtask-title.pending { color: #8b949e; }
+.subtask-roles { font-size: 10px; color: #484f58; min-width: 100px; text-align: right; }
+.subtask-stats { font-size: 10px; color: #8b949e; min-width: 120px; text-align: right; font-variant-numeric: tabular-nums; }
+.subtask-progress { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 11px; color: #8b949e; padding-left: 8px; }
+.subtask-bar { flex: 1; max-width: 200px; height: 3px; background: #30363d; border-radius: 2px; overflow: hidden; }
+.subtask-bar-fill { height: 100%; background: #3fb950; border-radius: 2px; transition: width 0.3s; }
+
+/* Collapsible sections */
+.collapse-toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; margin-top: 8px; padding: 4px 0; }
+.collapse-toggle:hover .section-title { color: #e6edf3; }
+.collapse-toggle .section-title { margin-bottom: 0; }
+.collapse-toggle .arrow { font-size: 10px; color: #484f58; transition: transform 0.2s; }
+.collapse-toggle .arrow.open { transform: rotate(90deg); }
+.collapse-wrap { overflow: hidden; max-height: 0; transition: max-height 0.3s ease-out; }
+.collapse-wrap.open { max-height: 2000px; }
+
+/* Trace table */
+.trace-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+.trace-table th { text-align: left; color: #8b949e; font-weight: 600; padding: 5px 6px; border-bottom: 1px solid #30363d; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+.trace-table td { padding: 4px 6px; border-bottom: 1px solid #21262d; }
+.trace-table tr:last-child td { border-bottom: none; }
+.trace-table .num { text-align: right; }
+.trace-table .ok { color: #3fb950; } .trace-table .fail { color: #f85149; }
+
+
+/* Animations */
+@keyframes fadeSlideIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+.task-item-new { animation: fadeSlideIn 0.3s ease-out; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>The Agnostic Orchestrator</h1>
+  <span class="version" id="version">—</span>
+  <div class="right">
+    <span><span class="dot" id="health-dot"></span> <span id="health-text">connecting…</span></span>
+    <div class="queue-bar" id="queue-bar"></div>
+    <span class="last-updated" id="last-updated"></span>
+  </div>
+</div>
+<div class="banner" id="banner">Connection lost — retrying…</div>
+
+<div class="page">
+  <div class="charts-row">
+    <div class="chart-card donut-card">
+      <div class="chart-title">Status</div>
+      <canvas id="donut-canvas" width="170" height="170"></canvas>
+      <div class="donut-legend" id="donut-legend"></div>
+    </div>
+    <div class="chart-card timeline-card">
+      <div class="chart-header">
+        <div class="chart-title">Activity</div>
+        <div class="act-btns">
+          <button class="act-btn active" data-v="3600000">1h</button>
+          <button class="act-btn" data-v="21600000">6h</button>
+          <button class="act-btn" data-v="86400000">24h</button>
+          <button class="act-btn" data-v="604800000">7d</button>
+          <button class="act-btn" data-v="2592000000">30d</button>
+        </div>
+      </div>
+      <div class="timeline-wrap"><canvas id="timeline-canvas"></canvas></div>
+    </div>
+  </div>
+
+  <div class="main" id="main-grid">
+    <div class="col-left-bar">
+      <div class="filter-tabs" id="filter-tabs">
+        <button class="filter-tab active" data-f="all">All <span class="count" id="ft-all">0</span></button>
+        <button class="filter-tab" data-f="running"><span class="dot" style="background:#58a6ff"></span>Running <span class="count" id="ft-running">0</span></button>
+        <button class="filter-tab" data-f="queued"><span class="dot" style="background:#8b949e"></span>Queued <span class="count" id="ft-queued">0</span></button>
+        <button class="filter-tab" data-f="completed"><span class="dot" style="background:#3fb950"></span>Done <span class="count" id="ft-completed">0</span></button>
+        <button class="filter-tab" data-f="failed"><span class="dot" style="background:#f85149"></span>Failed <span class="count" id="ft-failed">0</span></button>
+      </div>
+    </div>
+    <div class="col-right-bar">
+      <button class="filter-tab" id="toggle-detail">◧ Hide detail</button>
+    </div>
+    <div class="col-left-content">
+      <ul class="task-list" id="task-list"><li class="empty-msg">Loading…</li></ul>
+    </div>
+    <div class="col-right-content">
+      <div class="detail-placeholder" id="detail-placeholder">Select a task</div>
+      <div class="detail" id="detail">
+        <div class="detail-header"><h2 id="detail-title">—</h2><span class="task-status" id="detail-status"></span></div>
+        <div class="detail-meta" id="detail-meta"></div>
+        <div class="blocked-reason" id="blocked-reason"></div>
+        <div class="collapse-toggle" data-target="prompt-wrap">
+          <span class="arrow open">▶</span>
+          <span class="section-title" style="margin-top:0">Prompt</span>
+        </div>
+        <div class="collapse-wrap open" id="prompt-wrap">
+          <div class="detail-body" id="detail-body"></div>
+        </div>
+        <div class="collapse-toggle" data-target="subtasks-wrap" id="subtasks-title">
+          <span class="arrow open">▶</span>
+          <span class="section-title" style="margin-top:0">Subtasks</span>
+        </div>
+        <div class="collapse-wrap open" id="subtasks-wrap">
+          <table class="trace-table" id="subtask-table"><thead><tr>
+            <th></th><th>#</th><th>Title</th><th class="num">Tokens</th><th class="num">Cost</th><th class="num">Time</th>
+          </tr></thead><tbody id="subtask-body"></tbody></table>
+          <div class="subtask-progress" id="subtask-progress"></div>
+        </div>
+        <div class="collapse-toggle" data-target="trace-wrap">
+          <span class="arrow open">▶</span>
+          <span class="section-title" style="margin-top:0">Traces</span>
+          <span style="color:#484f58;font-size:11px" id="trace-count"></span>
+        </div>
+        <div class="collapse-wrap open" id="trace-wrap">
+          <table class="trace-table"><thead><tr>
+            <th>#</th><th>Subtask</th><th>Role</th><th>Model</th><th class="num">Tok In</th><th class="num">Tok Out</th><th class="num">Cost</th><th class="num">Time</th><th>Ok</th>
+          </tr></thead><tbody id="trace-body"></tbody></table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script>
+(function() {
+  var POLL = 5000, POLL_D = 5000;
+  var C = { running:'#58a6ff', queued:'#8b949e', completed:'#3fb950', failed:'#f85149', blocked:'#d29922', stopped:'#484f58' };
+  var SS = ['completed','running','queued','failed','blocked','stopped'];
+
+  var selId = null, conn = false, lastTasks = [], filter = null, sumCache = {};
+  var hist = [], dChart = null, tChart = null, hasC = typeof Chart !== 'undefined';
+  var TERMINAL = ['completed','failed','stopped'];
+  var actRange = 3600000; // 1h default
+
+  // ── Helpers ──
+  function $(id) { return document.getElementById(id); }
+  function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+  function fmtTime(iso) {
+    if (!iso) return '—';
+    var d = new Date(iso.replace(' ','T')+'Z');
+    if (isNaN(d)) return iso.slice(0,16)||'—';
+    var today=new Date(), same=d.getFullYear()===today.getFullYear()&&d.getMonth()===today.getMonth()&&d.getDate()===today.getDate();
+    if(same) return d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    return d.toLocaleDateString([],{month:'short',day:'numeric'})+' '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+  }
+  function fmtCost(v) { return v!=null ? '$'+v.toFixed(2) : '—'; }
+  function fmtSec(v) { return v!=null ? v.toFixed(1)+'s' : '—'; }
+  function fmtTok(v) { return v!=null ? v.toLocaleString() : '—'; }
+  function fmtTokK(v) { if(!v) return '0'; if(v<1000) return v+''; if(v<1e6) return (v/1000).toFixed(1)+'k'; return (v/1e6).toFixed(1)+'M'; }
+  function fmtElap(s) { if(!s) return '0s'; if(s<60) return Math.round(s)+'s'; if(s<3600) return Math.floor(s/60)+'m'+Math.round(s%60)+'s'; return Math.floor(s/3600)+'h'+Math.round((s%3600)/60)+'m'; }
+  function sumLine(s,t) {
+    if(!s||!s.trace_count) return '';
+    var steps=(s.steps_succeeded||0)+(s.steps_failed||0);
+    var tok=(s.total_tokens_in||0)+(s.total_tokens_out||0);
+    var elap=s.total_elapsed_s||0;
+    // Add live elapsed for running tasks
+    if(t&&t.status==='running'&&t.current_step){
+      var ref=parseServerTime(t.updated_at)||parseServerTime(t.created_at);
+      if(ref) elap+=(Date.now()-ref)/1000;
+    }
+    var parts=[steps+' steps',fmtTokK(tok)+' tok'];
+    if(s.total_cost_usd) parts.push(fmtCost(s.total_cost_usd));
+    parts.push(fmtElap(elap));
+    return parts.join(' · ');
+  }
+
+
+  // ── API ──
+  function api(p) { return fetch(p).then(function(r){if(!r.ok)throw new Error(r.status);return r.json();}); }
+
+  // ── Connection ──
+  function hideDetail() { $('detail').classList.remove('visible'); $('detail-placeholder').style.display=''; }
+  function setConn(ok) {
+    conn=ok; $('banner').classList.toggle('visible',!ok);
+    $('health-dot').classList.toggle('ok',ok); $('health-dot').classList.toggle('err',!ok);
+    if(!ok) $('health-text').textContent='disconnected';
+  }
+
+  // ── Header ──
+  function renderHeader(h) {
+    $('version').textContent='v'+h.version; $('health-text').textContent=h.status;
+    $('last-updated').textContent=new Date().toLocaleTimeString();
+    var bar=$('queue-bar'); bar.innerHTML='';
+    for(var i=0;i<(h.queue_max_concurrent||1);i++){
+      var b=document.createElement('span');
+      b.className='queue-block '+(i<(h.queue_running||0)?'active':'empty');
+      bar.appendChild(b);
+    }
+  }
+
+
+  // ── Activity view switcher ──
+  document.querySelectorAll('.act-btn').forEach(function(btn){
+    btn.onclick=function(){
+      actRange=parseInt(btn.dataset.v);
+      document.querySelectorAll('.act-btn').forEach(function(b){b.classList.toggle('active',b===btn);});
+      refreshTimeline();
+    };
+  });
+
+  // ── Filter tabs ──
+  document.querySelectorAll('.filter-tab').forEach(function(tab){
+    tab.onclick=function(){
+      var f=tab.getAttribute('data-f');
+      filter=(f==='all')?null:f;
+      document.querySelectorAll('.filter-tab').forEach(function(t){t.classList.toggle('active',t===tab);});
+      renderTasks(lastTasks);
+    };
+  });
+  function updateTabCounts(cn){
+    $('ft-all').textContent=cn.total||0;
+    $('ft-running').textContent=cn.running||0;
+    $('ft-queued').textContent=cn.queued||0;
+    $('ft-completed').textContent=cn.completed||0;
+    $('ft-failed').textContent=cn.failed||0;
+  }
+
+  // ── Charts ──
+  function initCharts() {
+    if(!hasC){ document.querySelectorAll('.chart-card').forEach(function(c){
+      var t=c.querySelector('.chart-title'); c.innerHTML=''; if(t)c.appendChild(t);
+      var f=document.createElement('div');f.className='chart-fallback';f.textContent='Charts unavailable (offline)';c.appendChild(f);
+    }); return; }
+    Chart.defaults.font.family="Consolas, Monaco, 'Courier New', monospace";
+    Chart.defaults.font.size=11; Chart.defaults.color='#8b949e';
+
+    dChart=new Chart($('donut-canvas'),{
+      type:'doughnut',
+      data:{ labels:SS.map(function(s){return s[0].toUpperCase()+s.slice(1);}),
+        datasets:[{data:[0,0,0,0,0,0],backgroundColor:SS.map(function(s){return C[s];}),borderWidth:0,hoverOffset:4}]},
+      options:{cutout:'72%',responsive:false,plugins:{legend:{display:false},tooltip:{enabled:true}},animation:{duration:400}},
+      plugins:[{id:'center',afterDraw:function(ch){
+        var data=ch.data.datasets[0].data, comp=data[0],fail=data[3],stop=data[5];
+        var term=comp+fail+stop, txt=term>0?Math.round(comp/term*100)+'%':'—';
+        var ctx=ch.ctx,w=ch.width,h=ch.height;
+        ctx.save(); ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillStyle=term>0?'#3fb950':'#484f58'; ctx.font='bold 22px Consolas,monospace'; ctx.fillText(txt,w/2,h/2-6);
+        ctx.fillStyle='#8b949e'; ctx.font='9px Consolas,monospace'; ctx.fillText(term>0?'SUCCESS':'NO DATA',w/2,h/2+12);
+        ctx.restore();
+      }}]
+    });
+
+    var ds=SS.map(function(s){return{label:s[0].toUpperCase()+s.slice(1),data:[],fill:true,
+      backgroundColor:C[s]+'35',borderColor:C[s],borderWidth:1.5,pointRadius:0,tension:0.35};});
+    tChart=new Chart($('timeline-canvas'),{
+      type:'line', data:{labels:[],datasets:ds},
+      options:{responsive:true,maintainAspectRatio:false,
+        scales:{x:{grid:{display:false},ticks:{maxTicksLimit:10,maxRotation:0}},y:{stacked:true,beginAtZero:true,grid:{color:'#21262d'},ticks:{stepSize:1,maxTicksLimit:6}}},
+        plugins:{legend:{position:'bottom',labels:{boxWidth:8,padding:8,font:{size:10}}},tooltip:{mode:'index',intersect:false}},
+        interaction:{mode:'index',intersect:false},animation:{duration:300}}
+    });
+  }
+
+  function fmtHistLabel(ts,range) {
+    var d=new Date(ts);
+    if(range<=3600000) return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2)+':'+('0'+d.getSeconds()).slice(-2);
+    if(range<=86400000) return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
+    return d.toLocaleDateString([],{month:'short',day:'numeric'})+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
+  }
+
+  function refreshTimeline() {
+    if(!hasC||!tChart) return;
+    var now=Date.now(), cutoff=now-actRange;
+    var pts=hist.filter(function(h){return h.ts>=cutoff;});
+    // Downsample to ~250 points max
+    if(pts.length>250){
+      var step=Math.ceil(pts.length/250), sam=[];
+      for(var i=0;i<pts.length;i+=step)sam.push(pts[i]);
+      if(sam[sam.length-1]!==pts[pts.length-1])sam.push(pts[pts.length-1]);
+      pts=sam;
+    }
+    var newLabels=pts.map(function(h){return fmtHistLabel(h.ts,actRange);});
+    var newData=SS.map(function(s){return pts.map(function(h){return h.c[s]||0;});});
+    // Reset completely so Chart.js recalculates the x-axis
+    tChart.data.labels=[];
+    SS.forEach(function(s,i){tChart.data.datasets[i].data=[];});
+    tChart.update('none');
+    tChart.data.labels=newLabels;
+    SS.forEach(function(s,i){tChart.data.datasets[i].data=newData[i];});
+    tChart.update();
+  }
+
+  function updateCharts(cn) {
+    if(!hasC) return;
+    // Donut
+    var data=SS.map(function(s){return cn[s]||0;});
+    dChart.data.datasets[0].data=data; dChart.update();
+    var leg=$('donut-legend'); leg.innerHTML='';
+    SS.forEach(function(s,i){ if(!data[i])return;
+      leg.innerHTML+='<span class="donut-legend-item"><span class="donut-legend-dot" style="background:'+C[s]+'"></span>'+s+' '+data[i]+'</span>';
+    });
+    // Timeline — append to buffer and refresh
+    hist.push({ts:Date.now(),c:cn});
+    refreshTimeline();
+  }
+
+  // ── Task list (DOM diff) ──
+  function mkTask(t) {
+    var li=document.createElement('li'); li.className='task-item'; li.dataset.id=t.task_id;
+    var st=esc(t.status), ml=sumLine(sumCache[t.task_id],t);
+    li.innerHTML='<div class="task-row"><span class="task-id">#'+t.task_id+'</span>'+
+      '<span class="task-title">'+esc(t.title)+'</span>'+
+      '<span class="task-status s-'+st+'"><span class="dot"></span> '+st+'</span>'+
+      '<span class="task-time">'+fmtTime(t.updated_at)+'</span></div>'+
+      '<div class="task-meta">'+esc(ml)+'</div>';
+    li.onclick=function(){selectTask(t.task_id);};
+    return li;
+  }
+  function updTask(li,t) {
+    var st=esc(t.status), sel=li.querySelector('.task-status');
+    if(sel.className!=='task-status s-'+st){sel.className='task-status s-'+st;sel.innerHTML='<span class="dot"></span> '+st;}
+    var tm=li.querySelector('.task-time'),nt=fmtTime(t.updated_at); if(tm.textContent!==nt)tm.textContent=nt;
+    var ml=sumLine(sumCache[t.task_id],t);
+    if(t.current_step) ml+=(ml?'<br>':'')+'<span style="color:#58a6ff">▶ '+esc(t.current_step)+'</span>';
+    var me=li.querySelector('.task-meta'); if(me&&me.innerHTML!==ml)me.innerHTML=ml;
+    li.classList.toggle('selected',t.task_id===selId);
+  }
+  function renderTasks(tasks) {
+    var filtered=filter?tasks.filter(function(t){return t.status===filter;}):tasks;
+    var ul=$('task-list'), ex={};
+    ul.querySelectorAll('.task-item').forEach(function(e){ex[e.dataset.id]=e;});
+    var ids={}; filtered.forEach(function(t){ids[t.task_id]=true;});
+    Object.keys(ex).forEach(function(id){if(!ids[id]){ex[id].remove();delete ex[id];}});
+    var em=ul.querySelector('.empty-msg'); if(em&&filtered.length)em.remove();
+    if(!filtered.length){
+      var msg=filter?'No '+filter+' tasks':'No tasks';
+      if(!ul.querySelector('.empty-msg'))ul.innerHTML='<li class="empty-msg">'+msg+'</li>';
+      return;
+    }
+    var pv=null;
+    filtered.forEach(function(t){
+      var el=ex[t.task_id];
+      if(el){updTask(el,t);}else{el=mkTask(t);el.classList.add('task-item-new');ex[t.task_id]=el;}
+      if(pv){if(pv.nextElementSibling!==el)pv.after(el);}else{if(ul.firstElementChild!==el)ul.prepend(el);}
+      pv=el;
+    });
+  }
+
+  // ── Detail panel toggle ──
+  var detailCollapsed = localStorage.getItem('tao-detail-collapsed') === 'true';
+  function applyDetailState() {
+    $('main-grid').classList.toggle('single-col', detailCollapsed);
+    $('toggle-detail').textContent = detailCollapsed ? '◨ Show detail' : '◧ Hide detail';
+  }
+  applyDetailState();
+  $('toggle-detail').onclick = function(){
+    detailCollapsed = !detailCollapsed;
+    localStorage.setItem('tao-detail-collapsed', detailCollapsed);
+    applyDetailState();
+  };
+
+  // ── Collapsible sections ──
+  document.querySelectorAll('.collapse-toggle').forEach(function(toggle){
+    toggle.onclick=function(){
+      var target=$(toggle.dataset.target);
+      var arrow=toggle.querySelector('.arrow');
+      var isOpen=target.classList.toggle('open');
+      arrow.classList.toggle('open',isOpen);
+    };
+  });
+
+  // ── Subtask status computation ──
+  function parseServerTime(iso) {
+    if(!iso) return 0;
+    var d = new Date(iso.replace(' ','T')+'Z');
+    return isNaN(d) ? 0 : d.getTime();
+  }
+
+  function computeSubtaskStates(subtasks,traces,currentStep,taskCreatedAt) {
+    // Parse current step: "role:N — Title" where N is 1-based
+    var runIdx=-1;
+    if(currentStep){
+      var m=currentStep.match(/^\w+:(\d+)/);
+      if(m) runIdx=parseInt(m[1])-1; // convert to 0-based
+    }
+    // Group traces by subtask_index (skip scope — it produces subtasks, not work)
+    var traceMap={};
+    (traces||[]).forEach(function(tr){
+      if(tr.role==='scope') return;
+      var idx=tr.subtask_index;
+      if(idx===undefined||idx===null) return;
+      if(!traceMap[idx]) traceMap[idx]={roles:[],ok:true,elapsed:0,cost:0,tokIn:0,tokOut:0};
+      traceMap[idx].roles.push(tr.role);
+      if(!tr.success) traceMap[idx].ok=false;
+      traceMap[idx].elapsed+=(tr.elapsed_s||0);
+      traceMap[idx].cost+=(tr.cost_usd||0);
+      traceMap[idx].tokIn+=(tr.tokens_in||0);
+      traceMap[idx].tokOut+=(tr.tokens_out||0);
+    });
+
+    return subtasks.map(function(st,i){
+      var t=traceMap[i];
+      var state='pending';
+      var roles=[],elapsed=0,cost=0,tokIn=0,tokOut=0;
+      if(t){
+        roles=t.roles; elapsed=t.elapsed; cost=t.cost; tokIn=t.tokIn; tokOut=t.tokOut;
+        if(i===runIdx) state='running';
+        else if(!t.ok) state='failed';
+        else state='done';
+      } else if(i===runIdx){
+        state='running';
+      }
+      // Add live elapsed for the running subtask from last trace's created_at
+      if(state==='running'){
+        var lastTs=0;
+        (traces||[]).forEach(function(tr){ var ts=parseServerTime(tr.created_at); if(ts>lastTs) lastTs=ts; });
+        var ref=lastTs||parseServerTime(taskCreatedAt);
+        if(ref) elapsed+=(Date.now()-ref)/1000;
+      }
+      return {title:st.title||'Subtask '+(i+1),state:state,roles:roles,elapsed:elapsed,cost:cost,tokIn:tokIn,tokOut:tokOut};
+    });
+  }
+
+  function renderSubtasks(states) {
+    var tb=$('subtask-body'); tb.innerHTML='';
+    var title=$('subtasks-title');
+    var tbl=$('subtask-table');
+    if(!states.length){title.style.display='none';tbl.style.display='none';$('subtask-progress').innerHTML='';return;}
+    title.style.display='';tbl.style.display='';
+
+    var icons={done:'✔',running:'●',failed:'✘',pending:'○'};
+    var colors={done:'#3fb950',running:'#58a6ff',failed:'#f85149',pending:'#484f58'};
+    states.forEach(function(s,i){
+      var row=document.createElement('tr');
+      if(s.state==='pending') row.style.opacity='0.5';
+      row.innerHTML='<td style="color:'+colors[s.state]+';text-align:center;width:20px">'+icons[s.state]+'</td>'+
+        '<td class="num">'+(i+1)+'</td>'+
+        '<td>'+esc(s.title)+'</td>'+
+        '<td class="num">'+((s.tokIn+s.tokOut)?fmtTokK(s.tokIn+s.tokOut):'—')+'</td>'+
+        '<td class="num">'+(s.cost?fmtCost(s.cost):'—')+'</td>'+
+        '<td class="num">'+(s.elapsed?fmtElap(s.elapsed):'—')+'</td>';
+      tb.appendChild(row);
+    });
+
+    // Progress bar
+    var done=states.filter(function(s){return s.state==='done';}).length;
+    var pct=Math.round(done/states.length*100);
+    $('subtask-progress').innerHTML='<div class="subtask-bar"><div class="subtask-bar-fill" style="width:'+pct+'%"></div></div>'+
+      '<span>'+done+'/'+states.length+'</span>';
+  }
+
+  // ── Detail ──
+  function renderDetail(task,sum,trc) {
+    $('detail').classList.add('visible'); $('detail-placeholder').style.display='none';
+    $('detail-title').textContent='#'+task.task_id+'  '+task.title;
+    var st=esc(task.status);
+    $('detail-status').innerHTML='<span class="dot"></span> '+st;
+    $('detail-status').className='task-status s-'+st;
+    var totalTok=(sum.total_tokens_in||0)+(sum.total_tokens_out||0);
+    var totalElap=sum.total_elapsed_s||0;
+    // Add live elapsed for running task
+    if(task.status==='running'&&task.current_step){
+      var lastTs=0;
+      (trc.traces||[]).forEach(function(tr){ var ts=parseServerTime(tr.created_at); if(ts>lastTs) lastTs=ts; });
+      var ref=lastTs||parseServerTime(task.created_at);
+      if(ref) totalElap+=(Date.now()-ref)/1000;
+    }
+    var metaParts='<span>'+fmtElap(totalElap)+' · '+fmtTokK(totalTok)+' tok · '+fmtCost(sum.total_cost_usd)+' · '+(sum.steps_succeeded||0)+' ok / '+(sum.steps_failed||0)+' fail</span>';
+    if(task.current_step) metaParts+='<span style="color:#58a6ff">▶ '+esc(task.current_step)+'</span>';
+    $('detail-meta').innerHTML=metaParts;
+    $('blocked-reason').textContent=task.blocked_reason||'';
+    $('detail-body').textContent=task.body||'';
+
+    // Subtasks
+    var subtasks=task.subtasks||[];
+    var traces=trc.traces||[];
+    var states=computeSubtaskStates(subtasks,traces,task.current_step,task.created_at);
+    renderSubtasks(states);
+
+    // Traces — hide section if no traces and nothing running
+    var hasRunning=task.status==='running'&&task.current_step;
+    var traceToggle=$('trace-wrap').previousElementSibling;
+    if(!traces.length&&!hasRunning){traceToggle.style.display='none';$('trace-wrap').style.display='none';}
+    else{traceToggle.style.display='';$('trace-wrap').style.display='';}
+    var tb=$('trace-body'); tb.innerHTML='';
+    $('trace-count').textContent=traces.length?'('+traces.length+')':'';
+    traces.forEach(function(tr,i){
+      var row=document.createElement('tr');
+      var subtaskName='—',roleName=tr.role||'—';
+      if(tr.label){var parts=tr.label.split(' \u2014 ',2);roleName=parts[0]||tr.role||'—';subtaskName=parts[1]||'—';}
+      row.innerHTML='<td class="num">'+(i+1)+'</td><td>'+esc(subtaskName)+'</td><td>'+esc(roleName)+'</td><td>'+esc(tr.model||'—')+'</td>'+
+        '<td class="num">'+fmtTok(tr.tokens_in)+'</td><td class="num">'+fmtTok(tr.tokens_out)+'</td>'+
+        '<td class="num">'+fmtCost(tr.cost_usd)+'</td><td class="num">'+fmtElap(tr.elapsed_s)+'</td>'+
+        '<td class="'+(tr.success?'ok':'fail')+'">'+(tr.success?'ok':'fail')+'</td>';
+      tb.appendChild(row);
+    });
+    // In-progress row from current_step
+    if(hasRunning){
+      var row=document.createElement('tr');row.style.opacity='0.6';
+      var sn='—',rn='—';
+      var cp=task.current_step;if(cp){var pp=cp.split(' \u2014 ',2);rn=pp[0]||'—';sn=pp[1]||'—';}
+      // Compute elapsed from last trace's created_at (or task created_at if no traces)
+      var lastTs=0;
+      traces.forEach(function(tr){ var ts=parseServerTime(tr.created_at); if(ts>lastTs) lastTs=ts; });
+      var ref=lastTs||parseServerTime(task.created_at);
+      var elapsed=ref?(Date.now()-ref)/1000:0;
+      row.innerHTML='<td class="num">'+(traces.length+1)+'</td><td>'+esc(sn)+'</td><td>'+esc(rn)+'</td><td>—</td>'+
+        '<td class="num">—</td><td class="num">—</td>'+
+        '<td class="num">—</td><td class="num">'+fmtElap(elapsed)+'</td>'+
+        '<td style="color:#d29922">⏳</td>';
+      tb.appendChild(row);
+    }
+  }
+  function selectTask(id){
+    if(selId===id){selId=null;hideDetail();renderTasks(lastTasks);return;}
+    selId=id; renderTasks(lastTasks); pollDetail();
+  }
+
+  // ── Polling ──
+  function pollMain() {
+    if(document.hidden)return;
+    Promise.all([api('/health'),api('/tasks')]).then(function(r){
+      setConn(true); renderHeader(r[0]);
+      var tasks=r[1].tasks||[]; lastTasks=tasks;
+      var cn={total:tasks.length,running:0,queued:0,completed:0,failed:0,blocked:0,stopped:0};
+      tasks.forEach(function(t){if(cn[t.status]!==undefined)cn[t.status]++;});
+      updateCharts(cn); updateTabCounts(cn);
+      // Fetch summaries (skip cached terminal tasks)
+      var sps=tasks.map(function(t){
+        if(sumCache[t.task_id]&&TERMINAL.indexOf(t.status)!==-1) return Promise.resolve(null);
+        return api('/tasks/'+t.task_id+'/summary').catch(function(){return null;});
+      });
+      return Promise.all(sps).then(function(sums){
+        sums.forEach(function(s){if(s&&s.task_id)sumCache[s.task_id]=s;});
+        renderTasks(tasks);
+        // Auto-select first task if none selected
+        if(selId==null&&tasks.length){ selId=tasks[0].task_id; renderTasks(tasks); pollDetail(); }
+      });
+    }).catch(function(){setConn(false);});
+  }
+  function pollDetail() {
+    if(selId==null||document.hidden)return;
+    Promise.all([api('/tasks/'+selId),api('/tasks/'+selId+'/summary'),api('/tasks/'+selId+'/traces')])
+    .then(function(r){renderDetail(r[0],r[1],r[2]);})
+    .catch(function(){if(!conn)return;selId=null;hideDetail();});
+  }
+
+  // ── Init ──
+  initCharts(); pollMain();
+  setInterval(pollMain,POLL); setInterval(pollDetail,POLL_D);
+  document.addEventListener('visibilitychange',function(){if(!document.hidden){pollMain();pollDetail();}});
+})();
+</script>
+</body>
+</html>

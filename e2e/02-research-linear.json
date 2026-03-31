@@ -1,0 +1,20 @@
+{
+    "title": "E2E: Research — Python dataclasses cheat sheet",
+    "body": "Research Python dataclasses (stdlib). Write a concise cheat sheet as a markdown file called dataclasses-cheatsheet.md in the working directory. Cover: basic usage, field defaults, __post_init__, frozen, slots, inheritance. Max 100 lines.",
+    "cwd": "{CWD}",
+    "scope": {"model_spec": "sonnet@claude"},
+    "cycle": [
+        {
+            "id": "gather",
+            "type": "llm",
+            "prompt": "You are researching this topic. Gather the key facts, patterns, and examples. Structure your output as raw notes organized by sub-topic. Do NOT write a polished document yet.",
+            "model_spec": "sonnet@claude"
+        },
+        {
+            "id": "write",
+            "type": "llm",
+            "prompt": "You are writing the final document from the gathered notes. Write a clean, concise cheat sheet as markdown. Save it to disk using the Write tool.",
+            "model_spec": "sonnet@claude"
+        }
+    ]
+}

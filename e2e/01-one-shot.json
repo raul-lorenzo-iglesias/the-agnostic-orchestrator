@@ -1,0 +1,13 @@
+{
+    "title": "E2E: One-shot — hello world script",
+    "body": "Write a Python script called hello.py in the working directory. The script should print 'Hello from TAO cycle v2!' when executed. Use the Write tool to save the file.",
+    "cwd": "{CWD}",
+    "cycle": [
+        {
+            "id": "implement",
+            "type": "llm",
+            "prompt": "Implement the task described above. Write the file to disk using the Write tool.",
+            "model_spec": "sonnet@claude"
+        }
+    ]
+}

@@ -1,0 +1,21 @@
+{
+    "title": "E2E R2: Research — Python concurrency comparison",
+    "body": "Compare three Python concurrency approaches: threading, multiprocessing, and asyncio. For EACH approach, write a separate analysis document:\n\n1. threading-analysis.md — when to use, GIL impact, use cases, code patterns\n2. multiprocessing-analysis.md — when to use, IPC overhead, use cases, code patterns\n3. asyncio-analysis.md — when to use, event loop model, use cases, code patterns\n\nThen write a comparison summary:\n4. concurrency-comparison.md — side-by-side comparison table, decision flowchart (when to pick each), performance trade-offs\n\nEach document should be 40-80 lines. All files in the working directory.",
+    "cwd": "{CWD}",
+    "scope": {"model_spec": "sonnet@claude"},
+    "cycle": [
+        {
+            "id": "gather",
+            "type": "llm",
+            "prompt": "Research this specific topic. Gather key facts, patterns, and code examples. Structure as raw notes by sub-topic. Do NOT write a polished document.",
+            "model_spec": "sonnet@claude"
+        },
+        {
+            "id": "write",
+            "type": "llm",
+            "prompt": "Write the final document from the gathered notes. Clean, concise markdown. Save to disk using the Write tool with the exact filename from the subtask description.",
+            "model_spec": "sonnet@claude"
+        }
+    ],
+    "policies": {"batch_size": 5, "max_iterations": 3}
+}

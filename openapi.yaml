@@ -1,0 +1,671 @@
+openapi: 3.1.0
+info:
+  title: TAO — The Agnostic Orchestrator
+  version: 1.0.0
+  description: |
+    HTTP API for submitting, monitoring, and managing LLM tasks.
+
+    TAO runs as a local service (`tao serve --http`). Apps on the same machine
+    communicate with it over HTTP. Tasks define a configurable cycle of LLM and
+    command steps. Results are persisted in SQLite.
+
+    Submit tasks with `title`, `body`, `cwd`, and `cycle`.
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: http://127.0.0.1:8321
+    description: Default local server
+
+paths:
+  /tasks:
+    post:
+      operationId: submitTask
+      summary: Submit a task
+      description: |
+        Creates a task in the queue with status `queued`. The queue loop
+        picks it up when capacity is available.
+
+        The request body uses the same JSON format as task files passed to
+        `tao run`. The server extracts `title`, `body`, and optionally `task_id` —
+        everything else becomes the task config.
+
+        `task_id` is optional — if omitted, the server auto-generates one.
+        `body_file` is not supported via HTTP — inline the body text directly.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskSubmit'
+            examples:
+              minimal:
+                summary: Minimal one-shot submission
+                value:
+                  title: Write hello.py
+                  body: Write a Python script that prints Hello World
+                  cwd: /path/to/workspace
+                  cycle:
+                    - id: implement
+                      type: llm
+                      prompt: Implement the task.
+                      model_spec: sonnet@claude
+              full:
+                summary: Full scoped submission with validation loop
+                value:
+                  title: Build login page
+                  body: Create a login page with email/password auth and tests
+                  cwd: /path/to/project
+                  scope:
+                    model_spec: sonnet@claude
+                  cycle:
+                    - id: plan
+                      type: llm
+                      prompt: Plan the implementation.
+                      model_spec: sonnet@claude
+                    - id: implement
+                      type: llm
+                      prompt: Implement the plan.
+                      model_spec: opus@claude
+                      next: validate
+                    - id: fix
+                      type: llm
+                      prompt: Fix the errors.
+                      model_spec: sonnet@claude
+                      next: validate
+                    - id: validate
+                      type: command
+                      commands:
+                        - ruff check --fix src/
+                        - python -m pytest tests/
+                      on_fail: fix
+                  max_retries: 3
+                  policies:
+                    batch_size: 5
+      responses:
+        '201':
+          description: Task created and queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskCreated'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missing_field:
+                  value:
+                    error: "missing required field: title"
+                    code: MISSING_FIELD
+        '409':
+          description: Task ID already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "task 42 already exists"
+                code: TASK_ALREADY_EXISTS
+
+    get:
+      operationId: listTasks
+      summary: List tasks
+      description: |
+        Returns all tasks, optionally filtered by status. Does not include
+        `config` or `body` — use GET /tasks/{id} for full details.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/TaskStatus'
+          description: Filter by task status
+      responses:
+        '200':
+          description: Task list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tasks]
+                properties:
+                  tasks:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TaskSummaryItem'
+
+  /tasks/{task_id}:
+    parameters:
+      - $ref: '#/components/parameters/TaskId'
+
+    get:
+      operationId: getTask
+      summary: Get task status and metadata
+      description: |
+        Returns the full task record. When status is `blocked`, includes
+        `blocked_reason` so the consumer knows what context to provide
+        in the unblock call.
+      responses:
+        '200':
+          description: Task details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          $ref: '#/components/responses/InvalidTaskId'
+        '404':
+          $ref: '#/components/responses/TaskNotFound'
+
+    delete:
+      operationId: deleteTask
+      summary: Delete a task
+      description: |
+        Permanently deletes a task and all its checkpoints and traces.
+        Only tasks in a terminal or stopped state (`completed`, `failed`,
+        `cancelled`, `stopped`) can be deleted.
+      responses:
+        '200':
+          description: Task deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted]
+                properties:
+                  deleted:
+                    type: boolean
+                    example: true
+        '400':
+          $ref: '#/components/responses/InvalidTaskId'
+        '404':
+          $ref: '#/components/responses/TaskNotFound'
+        '409':
+          description: Task is not in a deletable state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /tasks/{task_id}/stop:
+    parameters:
+      - $ref: '#/components/parameters/TaskId'
+
+    post:
+      operationId: stopTask
+      summary: Request graceful stop
+      description: |
+        Requests a graceful stop for a running task. Returns `202 Accepted`
+        immediately — the stop is *requested*, not *completed*. The flow
+        checks the stop event at the next safe point and exits cleanly.
+
+        Poll `GET /tasks/{id}` to confirm the status changed to `stopped`.
+      responses:
+        '202':
+          description: Stop requested
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [task_id, message]
+                properties:
+                  task_id:
+                    type: integer
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/InvalidTaskId'
+        '404':
+          $ref: '#/components/responses/TaskNotFound'
+        '409':
+          description: Task cannot be stopped
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /tasks/{task_id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/TaskId'
+
+    post:
+      operationId: cancelTask
+      summary: Cancel a task (terminal)
+      description: |
+        Cancels a task permanently. Unlike stop, `cancelled` is terminal —
+        the task cannot be resumed. Works on any non-terminal task.
+      responses:
+        '200':
+          description: Task cancelled
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [task_id, status]
+                properties:
+                  task_id:
+                    type: integer
+                  status:
+                    type: string
+        '400':
+          $ref: '#/components/responses/InvalidTaskId'
+        '404':
+          $ref: '#/components/responses/TaskNotFound'
+        '409':
+          description: Task is already terminal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /tasks/{task_id}/unblock:
+    parameters:
+      - $ref: '#/components/parameters/TaskId'
+
+    post:
+      operationId: unblockTask
+      summary: Resume a blocked/stopped/failed task
+      description: |
+        Moves a blocked, stopped, or failed task back to `queued`.
+        The optional `context` dict is merged into the checkpoint before resuming.
+        The recognized key is `human_message` — injected into the next step's prompt.
+
+        An optional `config` dict can update the task config before resuming
+        (e.g. to increase `max_retries`).
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                context:
+                  type: object
+                  description: Key-value pairs merged into checkpoint. Recognized key is `human_message`.
+                  additionalProperties: true
+                config:
+                  type: object
+                  description: Updated task config (merged with existing).
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Task unblocked and re-queued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [task_id, status]
+                properties:
+                  task_id:
+                    type: integer
+                  status:
+                    type: string
+                    example: queued
+        '400':
+          $ref: '#/components/responses/InvalidTaskId'
+        '404':
+          $ref: '#/components/responses/TaskNotFound'
+        '409':
+          description: Task cannot be unblocked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /tasks/{task_id}/restart:
+    parameters:
+      - $ref: '#/components/parameters/TaskId'
+
+    post:
+      operationId: restartTask
+      summary: Restart from scratch
+      description: |
+        Restarts a task — clears all checkpoints, traces, and subtask state.
+        The task returns to `queued` with a clean slate.
+        Works on any non-running task. Stop the task first if it's running.
+      responses:
+        '200':
+          description: Task restarted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [task_id, status]
+                properties:
+                  task_id:
+                    type: integer
+                  status:
+                    type: string
+                    example: queued
+        '400':
+          $ref: '#/components/responses/InvalidTaskId'
+        '404':
+          $ref: '#/components/responses/TaskNotFound'
+        '409':
+          description: Task is currently running
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /tasks/{task_id}/traces:
+    parameters:
+      - $ref: '#/components/parameters/TaskId'
+
+    get:
+      operationId: getTraces
+      summary: Get execution traces
+      description: |
+        Returns all execution traces for a task, ordered chronologically.
+        Each trace represents one step execution.
+      responses:
+        '200':
+          description: Trace list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [task_id, traces]
+                properties:
+                  task_id:
+                    type: integer
+                  traces:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Trace'
+        '400':
+          $ref: '#/components/responses/InvalidTaskId'
+        '404':
+          $ref: '#/components/responses/TaskNotFound'
+
+  /tasks/{task_id}/summary:
+    parameters:
+      - $ref: '#/components/parameters/TaskId'
+
+    get:
+      operationId: getSummary
+      summary: Get aggregated metrics
+      description: |
+        Returns aggregated metrics across all traces for a task.
+        Returns zeroed values if no traces exist (not an error).
+      responses:
+        '200':
+          description: Aggregated summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Summary'
+        '400':
+          $ref: '#/components/responses/InvalidTaskId'
+        '404':
+          $ref: '#/components/responses/TaskNotFound'
+
+  /health:
+    get:
+      operationId: healthCheck
+      summary: Health check
+      description: |
+        Returns server health, version, and queue state.
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+
+components:
+  parameters:
+    TaskId:
+      name: task_id
+      in: path
+      required: true
+      description: Task ID (positive integer)
+      schema:
+        type: integer
+        minimum: 1
+
+  responses:
+    TaskNotFound:
+      description: Task not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    InvalidTaskId:
+      description: Invalid task ID format
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    TaskStatus:
+      type: string
+      enum: [queued, running, completed, failed, blocked, stopped, cancelled]
+
+    TaskSubmit:
+      type: object
+      required: [title, cwd, cycle]
+      properties:
+        task_id:
+          type: integer
+          minimum: 1
+          description: Optional. If omitted, auto-generated.
+        title:
+          type: string
+          minLength: 1
+        body:
+          type: string
+          default: ""
+        cwd:
+          type: string
+          description: Working directory. Must exist before submitting.
+        scope:
+          type: object
+          description: Scope config. When present, TAO decomposes into subtasks. Omit for one-shot.
+          properties:
+            model_spec:
+              type: string
+              description: "Format: alias@provider (e.g. sonnet@claude)"
+        cycle:
+          type: array
+          description: Ordered list of cycle steps (LLM and/or command).
+          items:
+            type: object
+            required: [id, type]
+            properties:
+              id:
+                type: string
+              type:
+                type: string
+                enum: [llm, command]
+              prompt:
+                type: string
+                description: LLM step only.
+              model_spec:
+                type: string
+                description: "LLM step only. Format: alias@provider"
+              commands:
+                type: array
+                items:
+                  type: string
+                description: Command step only. Shell commands run sequentially.
+              on_fail:
+                type: string
+                description: Command step only. Jump to this step id on failure.
+              next:
+                type: string
+                description: Jump to this step id after success.
+              timeout:
+                type: integer
+                description: Max seconds (default 1800 for LLM steps).
+              failover:
+                type: array
+                items:
+                  type: string
+                description: "LLM step only. Fallback model@provider list."
+        max_retries:
+          type: integer
+          default: 3
+          description: Safety cap on backward jumps per subtask. Top-level field, not inside policies.
+        tools:
+          type: array
+          items:
+            type: string
+          description: Provider-specific tool names to restrict LLM access. Omit for all tools.
+        policies:
+          type: object
+          properties:
+            batch_size:
+              type: integer
+              default: 5
+            max_iterations:
+              type: integer
+              default: 10
+            max_subtasks:
+              type: integer
+              default: 20
+        workspace:
+          type: object
+          description: Shell commands for workspace lifecycle.
+          additionalProperties: true
+        hooks:
+          type: object
+          description: Shell commands fired on lifecycle events.
+          additionalProperties: true
+
+    TaskCreated:
+      type: object
+      required: [task_id, status]
+      properties:
+        task_id:
+          type: integer
+        status:
+          type: string
+          example: queued
+
+    TaskSummaryItem:
+      type: object
+      properties:
+        task_id:
+          type: integer
+        title:
+          type: string
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        created_at:
+          type: string
+        updated_at:
+          type: string
+
+    Task:
+      type: object
+      properties:
+        task_id:
+          type: integer
+        title:
+          type: string
+        body:
+          type: string
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        blocked_reason:
+          type: string
+          description: Present only when status is `blocked`.
+        config:
+          type: object
+        created_at:
+          type: string
+        updated_at:
+          type: string
+
+    Trace:
+      type: object
+      properties:
+        id:
+          type: integer
+        task_id:
+          type: integer
+        subtask_index:
+          type: integer
+        role:
+          type: string
+          description: Step id from the cycle config (e.g. plan, implement, validate, scope).
+        model:
+          type: string
+        tokens_in:
+          type: integer
+        tokens_out:
+          type: integer
+        cost_usd:
+          type: number
+        elapsed_s:
+          type: number
+        success:
+          type: boolean
+        attempt:
+          type: integer
+        label:
+          type: string
+          description: "Human-readable label (e.g. implement:2 — Add login endpoint)."
+        created_at:
+          type: string
+
+    Summary:
+      type: object
+      properties:
+        task_id:
+          type: integer
+        total_cost_usd:
+          type: number
+        total_elapsed_s:
+          type: number
+        total_tokens_in:
+          type: integer
+        total_tokens_out:
+          type: integer
+        steps_succeeded:
+          type: integer
+        steps_failed:
+          type: integer
+        trace_count:
+          type: integer
+
+    Health:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        version:
+          type: string
+        queue_running:
+          type: integer
+        queue_max_concurrent:
+          type: integer
+
+    Error:
+      type: object
+      required: [error, code]
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+          enum:
+            - BAD_REQUEST
+            - INVALID_JSON
+            - MISSING_FIELD
+            - TASK_NOT_FOUND
+            - TASK_ALREADY_EXISTS
+            - INVALID_TASK_STATE
+            - INTERNAL_ERROR
+        current_status:
+          type: string
+          description: Present on INVALID_TASK_STATE errors.

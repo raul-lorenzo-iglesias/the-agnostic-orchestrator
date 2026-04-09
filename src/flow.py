@@ -51,6 +51,48 @@ from src.store import Store
 
 logger = logging.getLogger(__name__)
 
+# Max characters for LLM context injection. Prevents absurdly large prompts
+# when a previous step produces verbose output (e.g., full test logs).
+# Full output is always saved to .tao/logs/ for human review.
+_MAX_CONTEXT_CHARS = 50_000
+
+
+def _save_log_and_truncate(
+    content: str,
+    task_id: int,
+    step_id: str,
+    subtask_index: int,
+    workspace_path: str,
+) -> str:
+    """Save full content to a log file and return truncated version with reference.
+
+    If content is within _MAX_CONTEXT_CHARS, returns it unchanged (no file written).
+    Otherwise, writes to .tao/logs/task-{id}-{step}-{subtask}.log and returns
+    a truncated version with a pointer to the full file.
+    """
+    if len(content) <= _MAX_CONTEXT_CHARS:
+        return content
+
+    log_dir = os.path.join(workspace_path, ".tao", "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, f"task-{task_id}-{step_id}-{subtask_index + 1}.log")
+    with open(log_file, "w", encoding="utf-8") as f:
+        f.write(content)
+
+    # Keep first and last portions, add reference to full file
+    head = content[:_MAX_CONTEXT_CHARS // 2]
+    tail = content[-_MAX_CONTEXT_CHARS // 2:]
+    truncated = (
+        f"{head}\n\n"
+        f"... [TRUNCATED — full output: {log_file}] ...\n\n"
+        f"{tail}"
+    )
+    logger.info(
+        "[task %d] %s output truncated: %d -> %d chars, saved to %s",
+        task_id, step_id, len(content), len(truncated), log_file,
+    )
+    return truncated
+
 # Maps task_id → Event. Set the event to request a graceful stop.
 _stop_events: dict[int, threading.Event] = {}
 
@@ -473,15 +515,21 @@ def _run_cycle_llm_step(
     timeout = step.timeout
     cwd = workspace_path or None
 
-    # Context injection
+    # Context injection — truncate large outputs to prevent absurd prompts.
+    # Full content is saved to .tao/logs/ for human review.
     if last_llm_output:
-        context_section = last_llm_output
+        context_section = _save_log_and_truncate(
+            last_llm_output, task_id, f"{step.id}-context", subtask_index, workspace_path,
+        )
     else:
         context_section = subtask.get("description", "")
 
     parts = [context_section, "---", step.prompt]
     if pending_errors:
-        parts.extend(["---", pending_errors])
+        truncated_errors = _save_log_and_truncate(
+            pending_errors, task_id, f"{step.id}-errors", subtask_index, workspace_path,
+        )
+        parts.extend(["---", truncated_errors])
     prompt = "\n".join(parts)
 
     subtask_title = subtask.get("title", "")

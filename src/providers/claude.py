@@ -64,6 +64,10 @@ class ClaudeCliProvider:
         """Resolve a model alias to an actual model ID."""
         return self._models.get(model, model)
 
+    # Windows CreateProcess has a ~32760 char command-line limit.
+    # When the prompt exceeds this threshold, pass it via stdin instead of -p.
+    _MAX_ARG_LENGTH = 30000
+
     def _build_args(
         self,
         prompt: str,
@@ -72,9 +76,15 @@ class ClaudeCliProvider:
         tools: list[str],
         resume_session_id: str | None,
         cwd: str | None = None,
-    ) -> list[str]:
-        """Build the CLI argument list."""
+    ) -> tuple[list[str], bool]:
+        """Build the CLI argument list.
+
+        Returns:
+            Tuple of (args, use_stdin). When use_stdin is True, the prompt
+            must be piped via stdin instead of as a -p argument.
+        """
         resolved = self._resolve_model(model)
+        use_stdin = len(prompt) > self._MAX_ARG_LENGTH
         args = [
             self._command,
             "--model",
@@ -82,7 +92,7 @@ class ClaudeCliProvider:
             "--output-format",
             "json",
             "-p",
-            prompt,
+            "-" if use_stdin else prompt,
         ]
         if tools:
             args.extend(["--allowedTools", ",".join(tools)])
@@ -96,7 +106,7 @@ class ClaudeCliProvider:
             ])
         if resume_session_id:
             args.extend(["--resume", resume_session_id])
-        return args
+        return args, use_stdin
 
     def call(
         self,
@@ -128,20 +138,21 @@ class ClaudeCliProvider:
                 cwd,
             )
 
-        args = self._build_args(
+        args, use_stdin = self._build_args(
             prompt,
             model=model,
             tools=tools,
             resume_session_id=resume_session_id,
             cwd=cwd,
         )
-        logger.info("claude call: model=%s, tools=%s, cwd=%s", model, tools, cwd)
+        logger.info("claude call: model=%s, tools=%s, cwd=%s, stdin=%s", model, tools, cwd, use_stdin)
         logger.debug("claude args: %s", args)
 
         start = time.monotonic()
         try:
             result = subprocess.run(
                 args,
+                input=prompt if use_stdin else None,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",

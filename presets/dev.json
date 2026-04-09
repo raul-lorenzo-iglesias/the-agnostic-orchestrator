@@ -1,0 +1,49 @@
+{
+  "title": "REPLACE: Task title",
+  "body": "REPLACE: Task description. Describe deliverables, not implementation details.",
+  "cwd": "REPLACE: /path/to/project",
+  "cycle": [
+    {
+      "id": "design",
+      "type": "llm",
+      "prompt": "Analyze the task and plan the implementation.\n\nRead the project's configuration and convention files first (e.g. README, project docs, style guides). Then read any source files relevant to the task.\n\n1. Identify which files need to change and why.\n2. Describe the approach in 3-5 bullets. Focus on deliverables, NOT implementation details — leave flexibility for the implementer.\n3. List **acceptance criteria** — specific, testable conditions that define 'done correctly'. Each criterion must be falsifiable.\n   - GOOD: 'POST /api/users returns 201 with { id, name, email }'\n   - GOOD: 'Duplicate email returns 409 with error message'\n   - GOOD: 'TaskQueue.submit() with duplicate title raises ValueError'\n   - BAD: 'works correctly', 'handles errors', 'is well tested'\n\nOutput format:\n\n## Approach\n[bullets — what to deliver, not how to code it]\n\n## Files\n[list with one-line description each]\n\n## Acceptance Criteria\n[numbered list — every criterion testable and falsifiable]",
+      "model_spec": "sonnet@claude"
+    },
+    {
+      "id": "implement",
+      "type": "llm",
+      "prompt": "Implement the plan from the previous step. Write all files to disk.\n\nRules:\n- Read the project's convention files first for coding standards.\n- Only implement what was planned. No bonus refactors, no 'while I'm here' changes.\n- Do NOT write tests — a later step handles that.\n- Do NOT stub features with TODOs or placeholders. Every acceptance criterion must be fully implemented.\n- Prefer simple, direct code over clever abstractions.",
+      "model_spec": "opus@claude"
+    },
+    {
+      "id": "review",
+      "type": "llm",
+      "prompt": "You are a code reviewer. You have NOT seen the implementation reasoning — only its summary. Your job is to find problems, not to praise.\n\nIMPORTANT: Read every file that was created or modified from disk. Do NOT review based on the previous step's summary alone — read the actual source code.\n\nReview checklist:\n1. **Acceptance criteria**: Is each criterion from the design fully implemented? For each one, state: MET / STUBBED / MISSING / BROKEN.\n2. **Bugs**: Logic errors, off-by-one, null/undefined/None access, race conditions, missing await, wrong operator.\n3. **Security**: SQL/XSS/command injection, auth bypass, exposed secrets, missing input validation at system boundaries.\n4. **Scope creep**: Changes not justified by the acceptance criteria.\n5. **Dead code**: Unused imports, unreachable branches, commented-out code.\n\nFor each finding:\n- File + line range\n- Category (criteria/bug/security/scope-creep/dead-code)\n- Severity (blocker/warning/nit)\n- What's wrong and what the fix should be\n\nDo NOT write fixes yourself. Only report findings.\n\nBe concise — focus on problems, not descriptions of what works. Keep your review under 2000 words.\n\nEnd with:\n\nACCEPTANCE CRITERIA STATUS:\n[numbered list matching design, each marked MET/STUBBED/MISSING/BROKEN]\n\nREVIEW VERDICT: PASS / FAIL\nBLOCKERS: [count] | WARNINGS: [count] | NITS: [count]",
+      "model_spec": "sonnet@claude"
+    },
+    {
+      "id": "test",
+      "type": "llm",
+      "prompt": "Write tests for the implementation. Read the source files and existing test patterns in the project.\n\nThe previous step was a code review. Use its findings to inform your tests:\n- Any criterion marked STUBBED or MISSING — write a test that would catch it.\n- Any bug flagged — write a test that reproduces it.\n- Any warning — consider a test if it's verifiable.\n\nRules:\n1. Read 1-2 existing test files to match the project's style (imports, helpers, assertion patterns).\n2. Write tests that would FAIL if the implementation is broken:\n   - Happy path for each acceptance criterion\n   - Edge cases for changed behavior\n   - Error cases if error handling was added\n3. Every test must have a clear name describing the expected behavior.\n4. Do NOT modify existing tests unless the implementation intentionally changed their behavior.\n5. Write the test files to disk.",
+      "model_spec": "opus@claude",
+      "next": "validate"
+    },
+    {
+      "id": "fix",
+      "type": "llm",
+      "prompt": "Fix the validation errors shown below.\n\nRead the failing files and fix the root cause, not the symptom.\nDo NOT delete or skip failing tests — fix the code that makes them fail.\nAfter fixing, do NOT re-run tests yourself — the validate step handles that.",
+      "model_spec": "opus@claude",
+      "next": "validate"
+    },
+    {
+      "id": "validate",
+      "type": "command",
+      "commands": [
+        "REPLACE: typecheck command (e.g. 'npx tsc --noEmit' or 'python -m mypy src/')",
+        "REPLACE: test command (e.g. 'npm test' or 'python -m pytest tests/ -v')"
+      ],
+      "on_fail": "fix"
+    }
+  ],
+  "max_retries": 3
+}

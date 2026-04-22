@@ -1,0 +1,57 @@
+{
+  "title": "REPLACE: Refactor title",
+  "body_file": "REPLACE: path/to/body.md",
+  "cwd": "REPLACE: /absolute/path/to/project",
+  "scope": { "model_spec": "sonnet@claude" },
+  "cycle": [
+    {
+      "id": "plan",
+      "type": "llm",
+      "prompt": "You are confirming the shape of a code change before it is applied. The subtask description already names the finding, the files, the target end-state, and the constraints.\n\nYour job is VERIFICATION and CONTRACT DEFINITION, not implementation.\n\n1. Read every file listed in the subtask. Verify the finding still exists — line numbers may have drifted since the audit.\n2. If the finding is stale (already fixed, or the smell is gone), output a single line: `SKIP — <reason>` and stop. This aborts the subtask cleanly.\n3. If behavior preservation cannot be guaranteed (the change would alter observable behavior in any way), output `ABORT — would change behavior — <reason>` and stop.\n4. If valid, emit the subtask contract (this becomes the quality check for later steps). The contract is the DECLARED SCOPE — anything outside it in the final diff is a BLOCK.\n\nRULES:\n- Do NOT make any file edits in this step. Read-only.\n- The `Files` list must be exhaustive — if the edit will cascade to additional files (imports, test fixtures), list them. Anything in the diff that is NOT in this list will be rejected.\n- The `Change category` must be ONE of: `rename` | `move-file` | `extract-helper` | `extract-module` | `dead-code-removal` | `literal-to-constant` | `inline-to-import` | `type-narrowing` | `type-generic-rewrite` | `index-declaration` | `loop-to-batch` | `deduplication` | `import-reorganization`. If your change does not fit any of these, the task is probably not a pure refactor — emit `ABORT`.\n- `Expected diff shape` must be concrete enough that the guardrail step can judge the diff against it (e.g. `~30 replaced string literals with imported constants, no new functions, no removed exports`).\n\nOutput format:\n\n## Subtask contract\n- Finding ID: <id from subtask description>\n- Files: <exhaustive list, comma-separated>\n- Change category: <one of the enum above>\n- Expected diff shape: <one sentence describing additions/deletions/renames that SHOULD appear — nothing else is authorized>\n- Behavior preservation: <one sentence — either `Compile-time only` or `Runtime unchanged because <reason>`>\n\n## Verification\n<paragraph confirming the finding still matches reality in the current code>\n\n## Edits\n<one per line: `<file>:<line-range> — <before pattern> → <after pattern>`>\n\n## Risks\n<list or `none`>",
+      "model_spec": "sonnet@claude"
+    },
+    {
+      "id": "implement",
+      "type": "llm",
+      "prompt": "Apply the edits from the previous step. Write changes to disk with the Edit/Write tools.\n\nCONTRACT: the previous step produced a `## Subtask contract` section listing Files, Change category, and Expected diff shape. Your edits MUST respect the contract. Any change outside the declared Files list or outside the declared Change category is out of scope and will be blocked by the guardrail.\n\nHARD RULES — violating any aborts the subtask:\n- NO new npm dependencies. Do not modify package.json except to remove dead entries already listed in the contract.\n- NO new routes, HTTP endpoints, or CLI commands.\n- NO rate-limit config additions or modifications.\n- NO auth config changes (JWT sign/verify options, expiresIn, algorithm pinning, bcrypt rounds).\n- NO new calls to `requireEnv()`, no new env vars.\n- NO schema migrations that alter column types, nullability, add CHECK constraints, or add `.references()`. Declaring indexes that already exist in prod is the only schema edit allowed, and only if the contract's Change category is `index-declaration`.\n- NO table drops, NO column drops.\n- NO new exports that surface internals previously private.\n- NO file deletions outside what the contract declared.\n- NO edits to files NOT listed in the contract's Files field.\n\nSOFT RULES — keep unless the contract explicitly justifies otherwise:\n- When replacing literals with constants, the constant's runtime value MUST equal the original literal.\n- Public signatures in lib/* and services/* stay identical (parameter count, names, types, return type).\n- Route handler response shapes stay identical (fields, types, status codes).\n- Error messages and error class shapes stay identical.\n- Log message formats stay identical (log readers may parse them).\n\nIf mid-edit you realize the change would violate a HARD rule or exceed the contract, STOP:\n1. Revert every edit you made in this step (`git checkout -- <files>`).\n2. Output: `ABORT — <which rule or contract field> — <why>`.\n3. End the step.\n\nYour output MUST begin with the `## Subtask contract` section COPIED VERBATIM from the previous step's output (same headings, same bullets, same values). The guardrail step uses this contract to judge the diff. Altering, paraphrasing, or omitting it corrupts the quality gate.\n\nAfter the verbatim contract, add a `## Changes applied` section with a one-paragraph summary of the concrete edits and why behavior is preserved. The diff itself will be inspected in the next step — do not describe hypotheticals.",
+      "model_spec": "opus@claude",
+      "next": "verify"
+    },
+    {
+      "id": "verify",
+      "type": "command",
+      "commands": [
+        "REPLACE: typecheck command (e.g. 'npm --prefix path/to/project run typecheck')",
+        "REPLACE: test command (e.g. 'npm --prefix path/to/project test -- --run')"
+      ],
+      "on_fail": "fix"
+    },
+    {
+      "id": "fix",
+      "type": "llm",
+      "prompt": "A verification command failed. Read the failure output carefully.\n\nDIAGNOSIS RULES:\n- If a TEST is failing: the CODE is wrong, not the test. Fix the code to make the test pass as written. Do NOT edit, skip, rename, or delete the test. If the test was already failing before this subtask, prove it with `git log --oneline -- <test-file>` and note this as a preexisting failure to skip.\n- If TYPECHECK is failing: narrow the types. Do NOT add `any`, `unknown`-without-narrowing, `@ts-ignore`, `@ts-expect-error`, or non-null `!` assertions. Do NOT widen function signatures. If the error reveals a real bug, fix the bug.\n- If LINT is failing: fix the code, not the rule. Do NOT add `eslint-disable` comments.\n\nABORT CONDITIONS — if any applies, revert the subtask and abort:\n- Fixing the failure would require changing observable behavior.\n- Fixing the failure would require weakening a test.\n- Fixing the failure would require adding a type escape hatch (any, ignore, non-null).\n- The failure exposes a preexisting bug unrelated to this subtask.\n\nOn abort: run `git checkout -- <scope-files>` to revert ONLY this subtask's files (do not touch others). Output `ABORT — <reason>` and end.\n\nOn successful fix: apply the minimal fix, output a one-paragraph explanation. Do not re-run tests yourself — the verify step handles that.",
+      "model_spec": "opus@claude",
+      "next": "verify"
+    },
+    {
+      "id": "guardrail",
+      "type": "llm",
+      "prompt": "You are the final gate before commit. You have NOT seen the previous step's implementation reasoning. Your inputs are (a) the `## Subtask contract` section from the previous step's output — already in your context — and (b) the actual git diff of this subtask's changes, which you read from disk.\n\n1. Extract the contract from the previous step's output. You need: Files list, Change category, Expected diff shape.\n2. Read the real diff:\n   - `git diff HEAD --` (working tree vs HEAD)\n   - `git status --short` (new/deleted files)\n3. Judge each hunk against BOTH the contract and the behavior-preservation rule. Every hunk is ONE of:\n   - **SAFE** — The hunk is within the declared Files list, fits the declared Change category, matches the Expected diff shape, and does not alter observable behavior (no new validation, new status codes, rate limits, auth checks, env reads, exports of internals, response-shape changes, error-message changes, or log-format changes that parsers depend on). Reordering of awaits, `Promise.all` substitution, branch merging and the like are SAFE only if the plan's category explicitly covered them — otherwise they are BLOCK.\n   - **BLOCK** — Anything else. This includes: hunks in files not declared in the contract, hunks outside the declared Change category, hunks that subtly alter behavior, hunks that touch forbidden surfaces (rate limits, JWT, env, schema migrations beyond index declarations).\n\nBinary — there is no middle ground. If you find yourself wanting to write \"probably safe\" or \"likely fine\", that's a BLOCK.\n\n4. Decide the verdict:\n   - **PASS** — every hunk is SAFE. Output the categorization table, then `VERDICT: PASS`. Do NOT edit or revert any files.\n   - **BLOCK** — at least one hunk is BLOCK. You MUST revert the subtask's changes so the commit step produces nothing to commit:\n     a. Run `git checkout -- <each file in the contract's Files list>` to discard working-tree changes.\n     b. Run `git restore --staged <each file>` if anything was staged.\n     c. Run `git clean -fd <each path in the contract's Files list>` only if the subtask created new files that must be removed.\n     d. Verify with `git status --short` that the working tree is clean for the contract's scope.\n     e. Output the categorization table, list each BLOCK hunk with its reason, then `VERDICT: BLOCK — reverted`.\n\nOutput format:\n\n## Contract checked against\n- Files: <repeat from contract>\n- Change category: <repeat>\n- Expected diff shape: <repeat>\n\n## Hunks\n<file:line-range — SAFE | BLOCK — one-line reason; for BLOCK cite the rule or contract field violated>\n\n## Revert actions (only if BLOCK)\n<list the exact git commands you ran>\n\nVERDICT: PASS  |  VERDICT: BLOCK — reverted\n\nRules:\n- Do NOT edit source files. Reverting via `git checkout --` is allowed and required on BLOCK.\n- Do NOT commit. The next step handles that — and if you reverted, the commit will be a no-op (which correctly marks the subtask as non-shipping).\n- Binary decision. Uncertainty is BLOCK. A false-positive BLOCK just means a human reviews manually; a false-negative PASS ships a behavior change.\n- If the previous step's output is missing the `## Subtask contract` section (implement failed to preserve it), that alone is BLOCK — you cannot judge without the contract.",
+      "model_spec": "sonnet@claude"
+    },
+    {
+      "id": "commit",
+      "type": "command",
+      "commands": [
+        "git add -A",
+        "if git diff --cached --quiet; then echo 'No staged changes — guardrail reverted the subtask or no edits were needed.'; else REPLACE_WITH_COMMIT_CMD; fi"
+      ]
+    }
+  ],
+  "max_retries": 2,
+  "policies": {
+    "batch_size": 3,
+    "max_iterations": 15,
+    "max_subtasks": 40
+  }
+}

@@ -96,8 +96,10 @@ Based on [Anthropic's harness research](https://www.anthropic.com/engineering/ha
 6-step cycle for code-quality work where **observable behavior must not change**:
 
 ```
-plan (sonnet) → implement (opus) → verify (command) ←→ fix (opus) → guardrail (sonnet) → commit (command)
+plan (sonnet) → implement (opus, next: verify) → fix (opus, next: verify) → verify (command, on_fail: fix) → guardrail (sonnet) → commit (command)
 ```
+
+> **Cycle order matters.** `fix` is listed in the JSON array BEFORE `verify` on purpose. TAO advances linearly when a step has no `next` declared; if `fix` were placed after `verify`, a successful `verify` would linearly fall into `fix` and trigger an unnecessary retry loop (this bug is easy to hit — `dev.json` avoids it by putting `fix` before `validate` too). With `fix` before `verify`, `verify` success linearly advances into `guardrail`, which is the intended happy-path.
 
 ### When to use
 
@@ -192,4 +194,6 @@ The scope LLM picks `batch_size` findings per iteration and outputs each as a su
 
 **Skip vs abort semantics**. `SKIP` = finding no longer applies (moved, already fixed). `ABORT` = finding applies but cannot be fixed without behavior change. Both are healthy outcomes; TAO records them in the subtask summary and moves on.
 
-**Commit step handles guardrail BLOCK automatically.** The commit command's second line (`if git diff --cached --quiet; then echo …; else <commit> fi`) succeeds whether or not there's anything staged. A BLOCK from guardrail → files reverted → nothing staged → the `if` branch prints a message and exits 0. The subtask is marked successful (it correctly did nothing). If you want BLOCK to appear as a failed subtask instead, change the `if` branch to `exit 1`.
+**Commit step handles guardrail BLOCK automatically.** The commit command's second line (`git diff --cached --quiet && echo "..." || git commit -m "..."`) works under both bash and cmd.exe (TAO uses `subprocess.Popen(shell=True)`, which is bash on Unix and cmd on Windows). A BLOCK from guardrail → files reverted → nothing staged → the `&&` branch prints a message and exits 0. Otherwise the `||` branch commits. If you want BLOCK to appear as a failed subtask instead, replace the `echo` with `exit 1`.
+
+> **Do NOT use bash-only syntax like `if ...; then ...; fi` in command steps** — TAO on Windows runs these through cmd.exe, where bash control flow breaks. Stick to `&&`/`||` chains or invoke a shell script file explicitly.

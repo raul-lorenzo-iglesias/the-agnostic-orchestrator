@@ -18,6 +18,13 @@
       "next": "verify"
     },
     {
+      "id": "fix",
+      "type": "llm",
+      "prompt": "A verification command failed. Read the failure output carefully.\n\nDIAGNOSIS RULES:\n- If a TEST is failing: the CODE is wrong, not the test. Fix the code to make the test pass as written. Do NOT edit, skip, rename, or delete the test. If the test was already failing before this subtask, prove it with `git log --oneline -- <test-file>` and note this as a preexisting failure to skip.\n- If TYPECHECK is failing: narrow the types. Do NOT add `any`, `unknown`-without-narrowing, `@ts-ignore`, `@ts-expect-error`, or non-null `!` assertions. Do NOT widen function signatures. If the error reveals a real bug, fix the bug.\n- If LINT is failing: fix the code, not the rule. Do NOT add `eslint-disable` comments.\n\nABORT CONDITIONS — if any applies, revert the subtask and abort:\n- Fixing the failure would require changing observable behavior.\n- Fixing the failure would require weakening a test.\n- Fixing the failure would require adding a type escape hatch (any, ignore, non-null).\n- The failure exposes a preexisting bug unrelated to this subtask.\n\nOn abort: run `git checkout -- <scope-files>` to revert ONLY this subtask's files (do not touch others). Output `ABORT — <reason>` and end.\n\nOn successful fix: apply the minimal fix, output a one-paragraph explanation. Do not re-run tests yourself — the verify step handles that.",
+      "model_spec": "opus@claude",
+      "next": "verify"
+    },
+    {
       "id": "verify",
       "type": "command",
       "commands": [
@@ -25,13 +32,6 @@
         "REPLACE: test command (e.g. 'npm --prefix path/to/project test -- --run')"
       ],
       "on_fail": "fix"
-    },
-    {
-      "id": "fix",
-      "type": "llm",
-      "prompt": "A verification command failed. Read the failure output carefully.\n\nDIAGNOSIS RULES:\n- If a TEST is failing: the CODE is wrong, not the test. Fix the code to make the test pass as written. Do NOT edit, skip, rename, or delete the test. If the test was already failing before this subtask, prove it with `git log --oneline -- <test-file>` and note this as a preexisting failure to skip.\n- If TYPECHECK is failing: narrow the types. Do NOT add `any`, `unknown`-without-narrowing, `@ts-ignore`, `@ts-expect-error`, or non-null `!` assertions. Do NOT widen function signatures. If the error reveals a real bug, fix the bug.\n- If LINT is failing: fix the code, not the rule. Do NOT add `eslint-disable` comments.\n\nABORT CONDITIONS — if any applies, revert the subtask and abort:\n- Fixing the failure would require changing observable behavior.\n- Fixing the failure would require weakening a test.\n- Fixing the failure would require adding a type escape hatch (any, ignore, non-null).\n- The failure exposes a preexisting bug unrelated to this subtask.\n\nOn abort: run `git checkout -- <scope-files>` to revert ONLY this subtask's files (do not touch others). Output `ABORT — <reason>` and end.\n\nOn successful fix: apply the minimal fix, output a one-paragraph explanation. Do not re-run tests yourself — the verify step handles that.",
-      "model_spec": "opus@claude",
-      "next": "verify"
     },
     {
       "id": "guardrail",
@@ -44,7 +44,7 @@
       "type": "command",
       "commands": [
         "git add -A",
-        "if git diff --cached --quiet; then echo 'No staged changes — guardrail reverted the subtask or no edits were needed.'; else REPLACE_WITH_COMMIT_CMD; fi"
+        "git diff --cached --quiet && echo \"No staged changes (guardrail reverted or no edits needed).\" || REPLACE_WITH_COMMIT_CMD"
       ]
     }
   ],

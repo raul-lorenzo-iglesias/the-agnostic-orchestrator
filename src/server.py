@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -108,7 +109,17 @@ class TaoHandler(BaseHTTPRequestHandler):
         task_id = body.pop("task_id", None)
         title = body.pop("title")
         task_body = body.pop("body", "")
-        body.pop("body_file", None)  # not supported via HTTP, ignore
+        body_file = body.pop("body_file", None)
+
+        if body_file and not task_body:
+            cwd = body.get("cwd", "")
+            body_path = os.path.join(cwd, body_file) if cwd else body_file
+            try:
+                with open(body_path, encoding="utf-8") as bf:
+                    task_body = bf.read()
+            except FileNotFoundError:
+                self._send_error(400, f"body_file not found: {body_path}", "BAD_REQUEST")
+                return
 
         # Detect nested {"config": {...}} wrapper — common mistake when users
         # follow the Python API signature instead of the flat task JSON format.

@@ -478,6 +478,7 @@ def _run_commands(
                 "attempt": 1,
                 "error": output if not passed else "",
                 "label": command,
+                "output": output,
             },
         )
 
@@ -603,6 +604,7 @@ def _run_cycle_llm_step(
             "attempt": 1,
             "error": result.output if result.status != StepStatus.SUCCEEDED else "",
             "label": step_label,
+            "output": result.output,
         },
     )
 
@@ -904,6 +906,7 @@ def _run_flow_inner(
             "attempt": 1,
             "error": result.output if result.status != StepStatus.SUCCEEDED else "",
             "label": label,
+            "output": result.output,
         })
 
         _fire_hook(

@@ -353,6 +353,7 @@ class QueueManager:
                     "tokens_in": 0, "tokens_out": 0, "cost_usd": 0, "elapsed_s": 0,
                     "success": False, "attempt": 1, "error": str(exc),
                     "label": f"config error: {exc}",
+                    "output": str(exc),
                 })
                 self._store.update_task_status(task_id, TaskStatus.FAILED)
             except TaskNotFoundError:

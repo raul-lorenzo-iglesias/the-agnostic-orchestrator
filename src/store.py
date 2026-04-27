@@ -23,7 +23,11 @@ from src.models import StoreError, TaskNotFoundError, TaskStatus
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+# Cap stored trace output to keep the DB lean. Full prompts/responses can
+# reach hundreds of KB; 64 KB is enough for diagnosis without bloating rows.
+_TRACE_OUTPUT_MAX_BYTES = 65536
 
 _SCHEMA_SQL = """\
 CREATE TABLE IF NOT EXISTS tasks (
@@ -58,6 +62,7 @@ CREATE TABLE IF NOT EXISTS traces (
     attempt        INTEGER NOT NULL DEFAULT 1,
     error          TEXT NOT NULL DEFAULT '',
     label          TEXT NOT NULL DEFAULT '',
+    output         TEXT NOT NULL DEFAULT '',
     created_at     TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -66,6 +71,20 @@ CREATE TABLE IF NOT EXISTS meta (
     value TEXT NOT NULL
 );
 """
+
+
+def _truncate_trace_output(output: Any) -> str:
+    """Coerce trace output to str and cap at _TRACE_OUTPUT_MAX_BYTES.
+
+    None/empty → ''. Strings longer than the cap get a tail marker so readers
+    know the value was truncated.
+    """
+    if output is None or output == "":
+        return ""
+    s = str(output)
+    if len(s) <= _TRACE_OUTPUT_MAX_BYTES:
+        return s
+    return s[:_TRACE_OUTPUT_MAX_BYTES] + f"\n... [truncated {len(s) - _TRACE_OUTPUT_MAX_BYTES} chars]"
 
 
 def _execute_with_retry(
@@ -139,11 +158,29 @@ class Store:
             self._migrate(version)
 
     def _migrate(self, from_version: int) -> None:
-        """Apply schema migrations sequentially."""
-        raise StoreError(
-            f"schema version {from_version} is outdated (current: {SCHEMA_VERSION}). "
-            "Delete the database and restart."
-        )
+        """Apply schema migrations sequentially up to SCHEMA_VERSION."""
+        version = from_version
+        if version == 1:
+            # v1 → v2: add traces.output for full LLM/command outputs.
+            with self._lock:
+                self._conn.execute(
+                    "ALTER TABLE traces ADD COLUMN output TEXT NOT NULL DEFAULT ''"
+                )
+                self._conn.commit()
+            version = 2
+
+        if version != SCHEMA_VERSION:
+            raise StoreError(
+                f"schema version {from_version} is outdated and no migration "
+                f"path leads to {SCHEMA_VERSION}. Delete the database and restart."
+            )
+
+        with self._lock:
+            self._conn.execute(
+                "UPDATE meta SET value = ? WHERE key = ?",
+                (str(SCHEMA_VERSION), "schema_version"),
+            )
+            self._conn.commit()
 
     def _parse_json_column(self, raw: str | None, column_name: str) -> Any:
         """Safely parse a JSON column, returning {} on failure."""
@@ -422,8 +459,8 @@ class Store:
                 self._conn,
                 "INSERT INTO traces "
                 "(task_id, subtask_index, role, model, tokens_in, tokens_out, "
-                "cost_usd, elapsed_s, success, attempt, error, label) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "cost_usd, elapsed_s, success, attempt, error, label, output) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     task_id,
                     trace.get("subtask_index", 0),
@@ -437,6 +474,7 @@ class Store:
                     trace.get("attempt", 1),
                     trace.get("error", ""),
                     trace.get("label", ""),
+                    _truncate_trace_output(trace.get("output", "")),
                 ),
             )
             self._conn.commit()

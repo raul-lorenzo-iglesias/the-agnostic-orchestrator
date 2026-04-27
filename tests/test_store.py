@@ -396,3 +396,107 @@ def test_store_old_schema_raises(tmp_path):
 
     with pytest.raises(StoreError, match="outdated.*Delete"):
         Store(db_path)
+
+
+# --- Group 6: Trace output persistence (schema v2) ---
+
+
+def test_store_record_trace_persists_output(store):
+    """Trace output is persisted and retrievable via get_traces."""
+    create_task_in_store(store, task_id=1)
+    store.record_trace(1, create_trace(output="## Plan\n- step 1\n- step 2"))
+    traces = store.get_traces(1)
+    assert len(traces) == 1
+    assert traces[0]["output"] == "## Plan\n- step 1\n- step 2"
+
+
+def test_store_record_trace_default_output_empty(store):
+    """Trace recorded without an explicit output stores ''."""
+    create_task_in_store(store, task_id=1)
+    store.record_trace(1, create_trace())  # no output key
+    traces = store.get_traces(1)
+    assert traces[0]["output"] == ""
+
+
+def test_store_record_trace_truncates_long_output(store):
+    """Output longer than 64 KB is truncated with a marker."""
+    from src.store import _TRACE_OUTPUT_MAX_BYTES
+
+    create_task_in_store(store, task_id=1)
+    huge = "x" * (_TRACE_OUTPUT_MAX_BYTES + 5000)
+    store.record_trace(1, create_trace(output=huge))
+    traces = store.get_traces(1)
+    stored = traces[0]["output"]
+    assert stored.startswith("x" * 100)
+    assert "[truncated 5000 chars]" in stored
+    assert len(stored) < len(huge)
+
+
+def test_store_migration_v1_to_v2_adds_output_column(tmp_path):
+    """Opening a v1 DB auto-migrates it to v2: traces.output column exists."""
+    import sqlite3
+
+    db_path = str(tmp_path / "old_v1.db")
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.executescript("""
+        CREATE TABLE tasks (
+            task_id INTEGER PRIMARY KEY,
+            title TEXT NOT NULL,
+            body TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'queued',
+            current_step TEXT NOT NULL DEFAULT '',
+            subtasks TEXT NOT NULL DEFAULT '[]',
+            config TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE checkpoints (
+            task_id INTEGER PRIMARY KEY REFERENCES tasks(task_id),
+            data TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE traces (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL REFERENCES tasks(task_id),
+            subtask_index INTEGER NOT NULL DEFAULT 0,
+            role TEXT NOT NULL,
+            model TEXT NOT NULL DEFAULT '',
+            tokens_in INTEGER NOT NULL DEFAULT 0,
+            tokens_out INTEGER NOT NULL DEFAULT 0,
+            cost_usd REAL NOT NULL DEFAULT 0.0,
+            elapsed_s REAL NOT NULL DEFAULT 0.0,
+            success INTEGER NOT NULL DEFAULT 1,
+            attempt INTEGER NOT NULL DEFAULT 1,
+            error TEXT NOT NULL DEFAULT '',
+            label TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        INSERT INTO meta (key, value) VALUES ('schema_version', '1');
+    """)
+    conn.execute("INSERT INTO tasks (task_id, title) VALUES (1, 'old')")
+    conn.execute(
+        "INSERT INTO traces (task_id, role, label) VALUES (1, 'plan', 'pre-migration')"
+    )
+    conn.commit()
+    conn.close()
+
+    s = Store(db_path)
+    try:
+        existing = s.get_traces(1)
+        assert len(existing) == 1
+        assert existing[0]["label"] == "pre-migration"
+        assert existing[0]["output"] == ""
+
+        s.record_trace(1, create_trace(role="implement", output="hello"))
+        all_traces = s.get_traces(1)
+        assert len(all_traces) == 2
+        assert all_traces[1]["output"] == "hello"
+
+        row = s._conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()
+        assert row["value"] == "2"
+    finally:
+        s.close()

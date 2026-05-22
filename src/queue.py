@@ -304,9 +304,9 @@ class QueueManager:
                 with self._lock:
                     current = len(self._running)
                 if current < self._max_concurrent:
-                    tasks = self._store.list_tasks(status=TaskStatus.QUEUED)
-                    if tasks:
-                        self._launch_task(tasks[0])
+                    next_task = self._next_queued()
+                    if next_task is not None:
+                        self._launch_task(next_task)
                 consecutive_errors = 0
             except Exception:
                 consecutive_errors += 1
@@ -317,6 +317,20 @@ class QueueManager:
                 else min(self._poll_interval * consecutive_errors, 30.0)
             )
             self._shutdown_event.wait(wait)
+
+    def _next_queued(self) -> dict[str, Any] | None:
+        """Return the next QUEUED task to launch, or None if none are queued.
+
+        FIFO: the earliest-submitted task runs first. ``list_tasks`` returns
+        newest-first (created_at DESC) and ``created_at`` has only
+        second-resolution, so ties are non-deterministic; order by ``task_id``
+        (monotonic on insert) for a stable submission-order queue. This matters
+        when several tasks share one workspace and must run in sequence.
+        """
+        tasks = self._store.list_tasks(status=TaskStatus.QUEUED)
+        if not tasks:
+            return None
+        return min(tasks, key=lambda t: t["task_id"])
 
     def _launch_task(self, task: dict[str, Any]) -> None:
         """Launch a task in its own thread."""

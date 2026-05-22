@@ -407,6 +407,39 @@ class TestQueueCancel:
             qm.cancel_task(999)
 
 
+# --- Next-queued selection (FIFO) ---
+
+
+class TestQueueNextQueued:
+    def test_queue_next_queued_none_when_empty(self, store, mock_pool):
+        qm = QueueManager(store, mock_pool, poll_interval=0.05)
+        assert qm._next_queued() is None
+
+    def test_queue_next_queued_is_fifo_by_task_id(self, store, mock_pool):
+        """Earliest-submitted (lowest task_id) runs first, not newest (FIFO not LIFO)."""
+        qm = QueueManager(store, mock_pool, poll_interval=0.05)
+        # Insert out of id order; all default to QUEUED.
+        store.create_task(3, "Third")
+        store.create_task(1, "First")
+        store.create_task(2, "Second")
+
+        nxt = qm._next_queued()
+        assert nxt is not None
+        assert nxt["task_id"] == 1, f"expected lowest task_id first, got {nxt['task_id']}"
+
+    def test_queue_next_queued_advances_after_dequeue(self, store, mock_pool):
+        """Once the head leaves QUEUED, the next-lowest task_id is selected."""
+        qm = QueueManager(store, mock_pool, poll_interval=0.05)
+        store.create_task(1, "First")
+        store.create_task(2, "Second")
+        store.create_task(3, "Third")
+
+        store.update_task_status(1, TaskStatus.RUNNING)
+        nxt = qm._next_queued()
+        assert nxt is not None
+        assert nxt["task_id"] == 2
+
+
 # --- Running count ---
 
 

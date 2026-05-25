@@ -917,6 +917,54 @@ else:
         result = run_flow(1, store=store, pool=pool, config=config)
         assert result == TaskStatus.FAILED
 
+    def test_cycle_command_step_timeout_propagated(self, store, tmp_path):
+        """Cycle command step's `timeout` field reaches run_gate_command.
+
+        Regression guard: prior to fix, `_run_commands` did not forward
+        `step.timeout` and `gates.run_gate_command` defaulted to 120s. A
+        step.timeout=1 with a sleep(3) would have silently passed in ~3s
+        because the gate ran to completion under the 120s ceiling. With the
+        fix, the 1s timeout propagates and the command times out in ~1s.
+        """
+        import time as _time
+
+        ws_dir = tmp_path / "ws"
+        ws_dir.mkdir()
+
+        sleep_script = ws_dir / "sleep3.py"
+        sleep_script.write_text("import time; time.sleep(3)")
+
+        pool = _make_pool([_ok_response("implemented")])
+
+        store.create_task(task_id=1, title="Cmd timeout", body="")
+        config = _one_shot_config(
+            cwd=str(ws_dir),
+            cycle=[
+                {"id": "implement", "type": "llm",
+                 "prompt": "Implement.", "model_spec": "sonnet"},
+                {"id": "validate", "type": "command",
+                 "commands": [f"{_PYTHON} {sleep_script}"],
+                 "timeout": 1},
+            ],
+        )
+
+        start = _time.monotonic()
+        result = run_flow(1, store=store, pool=pool, config=config)
+        elapsed = _time.monotonic() - start
+
+        assert result == TaskStatus.FAILED, "step.timeout=1 must clip a sleep(3)"
+        # Should fail in ~1s (kill + reap ≤ a few seconds), well under 3s.
+        # If this asserts ≥2.5s, the timeout was NOT propagated.
+        assert elapsed < 2.5, (
+            f"Expected the command to be killed near the 1s mark; "
+            f"elapsed={elapsed:.1f}s suggests step.timeout did not propagate."
+        )
+
+        traces = store.get_traces(1)
+        validate_traces = [t for t in traces if t["role"] == "validate"]
+        assert validate_traces, "validate step should have produced a trace"
+        assert "timed out" in (validate_traces[-1].get("output") or "").lower()
+
 
 class TestCycleMaxRetries:
     """Tests for max_retries exhaustion."""

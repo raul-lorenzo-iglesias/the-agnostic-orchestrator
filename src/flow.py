@@ -433,6 +433,7 @@ def _run_commands(
     role_name: str,
     *,
     best_effort: bool = False,
+    timeout: int = 1800,
 ) -> list[dict[str, Any]]:
     """Run a list of shell commands and record traces.
 
@@ -444,6 +445,7 @@ def _run_commands(
         subtask_index: Current subtask index.
         role_name: Trace role name (e.g. step ID like "validate").
         best_effort: If True, continue on failure. If False, return on first failure.
+        timeout: Per-command timeout in seconds (forwarded to run_gate_command).
 
     Returns:
         List of result dicts with keys: command, passed, output, elapsed_s.
@@ -453,7 +455,7 @@ def _run_commands(
     results: list[dict[str, Any]] = []
     for command in commands:
         start = time.monotonic()
-        passed, output = run_gate_command(command, workspace_path)
+        passed, output = run_gate_command(command, workspace_path, timeout=timeout)
         elapsed = time.monotonic() - start
 
         result = {
@@ -722,6 +724,7 @@ def _run_subtask_cycle(
             cmd_results = _run_commands(
                 step.commands, workspace_path, store, task_id,
                 subtask_index, step.id, best_effort=True,
+                timeout=step.timeout,
             )
             all_passed = all(r.get("passed", False) for r in cmd_results)
 

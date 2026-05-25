@@ -20,7 +20,7 @@ def run_gate_command(
     command: str,
     workspace_path: str,
     *,
-    timeout: int = 120,
+    timeout: int = 1800,
 ) -> tuple[bool, str]:
     """Run a single shell command and return (passed, output).
 

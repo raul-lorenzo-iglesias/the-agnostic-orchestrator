@@ -84,7 +84,14 @@ class ClaudeCliProvider:
             must be piped via stdin instead of as a -p argument.
         """
         resolved = self._resolve_model(model)
-        use_stdin = len(prompt) > self._MAX_ARG_LENGTH
+        # Use stdin when the prompt won't fit on the command line, OR when it
+        # starts with a dash. Claude CLI (commander.js) parses values starting
+        # with `-` as flags even after `-p`, so a chained LLM output that
+        # begins with markdown `---` (separator) triggers `unknown option`.
+        use_stdin = (
+            len(prompt) > self._MAX_ARG_LENGTH
+            or prompt.lstrip().startswith("-")
+        )
         args = [
             self._command,
             "--model",

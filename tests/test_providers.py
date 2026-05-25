@@ -313,6 +313,59 @@ class TestClaudeCliProvider:
         assert result["session_id"] == ""
         assert result["elapsed_s"] > 0  # at least some time passed
 
+    @patch("src.providers.claude.subprocess.run")
+    def test_claude_short_prompt_uses_argv(self, mock_run):
+        """Normal prompt (short, no leading dash) goes via `-p <prompt>` argv."""
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=json.dumps({"result": "ok"}),
+            stderr="",
+        )
+
+        provider = ClaudeCliProvider()
+        provider.call("analyze the file", model="opus", tools=[], timeout=30)
+
+        cmd = mock_run.call_args[0][0]
+        # prompt appears verbatim in argv right after `-p`
+        assert "analyze the file" in cmd
+        # stdin not used
+        assert mock_run.call_args[1].get("input") is None
+
+    @patch("src.providers.claude.subprocess.run")
+    def test_claude_dash_prefix_prompt_uses_stdin(self, mock_run):
+        """Prompt starting with `-` (e.g. chained LLM output beginning with
+        markdown `---`) MUST be piped via stdin. Otherwise Claude CLI
+        (commander.js) parses it as a flag and errors with `unknown option`."""
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=json.dumps({"result": "ok"}),
+            stderr="",
+        )
+
+        provider = ClaudeCliProvider()
+        provider.call("---\n\n## Review\n\nFinding 1", model="opus", tools=[], timeout=30)
+
+        cmd = mock_run.call_args[0][0]
+        # `-p` value is the stdin sentinel, NOT the prompt
+        assert "-" == cmd[cmd.index("-p") + 1]
+        assert "---\n\n## Review\n\nFinding 1" not in cmd
+        # prompt arrived via stdin instead
+        assert mock_run.call_args[1].get("input") == "---\n\n## Review\n\nFinding 1"
+
+    @patch("src.providers.claude.subprocess.run")
+    def test_claude_leading_whitespace_then_dash_uses_stdin(self, mock_run):
+        """Whitespace-prefixed dash is still a dash for the CLI parser."""
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=json.dumps({"result": "ok"}),
+            stderr="",
+        )
+
+        provider = ClaudeCliProvider()
+        provider.call("\n  --opt value", model="opus", tools=[], timeout=30)
+
+        assert mock_run.call_args[1].get("input") == "\n  --opt value"
+
 
 # ============================================================
 # CopilotCliProvider tests

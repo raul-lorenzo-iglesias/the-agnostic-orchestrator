@@ -42,9 +42,15 @@
     {
       "id": "commit",
       "type": "command",
+      "_NOTE_quoting": "WINDOWS cmd.exe GOTCHA — single-quotes are NOT string delimiters. `git commit -m 'subject with spaces'` is parsed by cmd.exe as `git commit -m 'subject` then `with` and `spaces'` as pathspecs. Result: `error: pathspec 'with' did not match`. ALWAYS use escaped double-quotes (\\\"...\\\") in this JSON. If the subject contains a literal `\"`, prefer the -F file pattern (write subject to .git/COMMIT_EDITMSG_TAO first, then `git commit -F .git/COMMIT_EDITMSG_TAO`). Bug caught 2026-05-26 in /hoku-nightly; 3/3 tickets failed. See `feedback_tao_commit_windows_single_quotes` in memory for the full forensic.",
+      "_examples": {
+        "good_double_quoted": "git commit -m \\\"refactor: extract toIsoDate helper\\\"",
+        "good_F_file_pattern": "(printf \\\"refactor: extract toIsoDate helper\\\\n\\\" > .git/COMMIT_EDITMSG_TAO && git commit -F .git/COMMIT_EDITMSG_TAO)",
+        "BAD_single_quoted": "git commit -m 'refactor: extract toIsoDate helper'  ← BREAKS ON WINDOWS"
+      },
       "commands": [
         "git add -A",
-        "git diff --cached --quiet && echo \"No staged changes (guardrail reverted or no edits needed).\" || REPLACE_WITH_COMMIT_CMD"
+        "git diff --cached --quiet && echo \"No staged changes (guardrail reverted or no edits needed).\" || REPLACE_WITH_COMMIT_CMD_USING_ESCAPED_DOUBLE_QUOTES_OR_F_FILE_NEVER_SINGLE_QUOTES"
       ]
     }
   ],

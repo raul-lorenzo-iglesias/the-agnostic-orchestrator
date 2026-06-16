@@ -6,8 +6,16 @@ ProviderPool handles model routing and failover across providers.
 """
 
 from src.providers.claude import ClaudeCliProvider
+from src.providers.claude_interactive import ClaudeInteractiveProvider
 from src.providers.copilot import CopilotCliProvider
 from src.providers.llm_service import run_llm_service
 from src.providers.pool import ProviderPool, parse_model_spec
 
-__all__ = ["ClaudeCliProvider", "CopilotCliProvider", "ProviderPool", "parse_model_spec", "run_llm_service"]
+__all__ = [
+    "ClaudeCliProvider",
+    "ClaudeInteractiveProvider",
+    "CopilotCliProvider",
+    "ProviderPool",
+    "parse_model_spec",
+    "run_llm_service",
+]

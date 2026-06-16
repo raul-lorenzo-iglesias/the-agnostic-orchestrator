@@ -186,10 +186,11 @@ class TestCliRun:
             "step_configs": {"execute": {"model_spec": "sonnet"}},
         }))
 
-        # Patch engine.serve to avoid blocking
+        # Patch the Engine so run does not actually process tasks
         with patch("src.cli.Engine") as MockEngine:
             mock_engine = MockEngine.return_value.__enter__.return_value
             mock_engine.submit.return_value = 1
+            mock_engine.list_tasks.return_value = []
             main(["--config", cfg_path, "run", str(task_file)])
 
         captured = capsys.readouterr()
@@ -201,7 +202,7 @@ class TestCliRun:
                 "step_configs": {"execute": {"model_spec": "sonnet"}},
             },
         )
-        mock_engine.serve.assert_called_once()
+        mock_engine.run_until_complete.assert_called_once()
 
     def test_cli_run_with_task_id(self, cli_config, tmp_path, capsys):
         cfg_path, _ = cli_config
@@ -280,6 +281,7 @@ class TestCliRun:
         with patch("src.cli.Engine") as MockEngine:
             mock_engine = MockEngine.return_value.__enter__.return_value
             mock_engine.submit.side_effect = [10, 11, 12]
+            mock_engine.list_tasks.return_value = []
             main(["--config", cfg_path, "run"] + files)
 
         assert mock_engine.submit.call_count == 3
@@ -287,7 +289,7 @@ class TestCliRun:
         assert "submitted task 10" in captured.out
         assert "submitted task 11" in captured.out
         assert "submitted task 12" in captured.out
-        mock_engine.serve.assert_called_once()
+        mock_engine.run_until_complete.assert_called_once()
 
     def test_cli_run_file_not_found(self, cli_config, capsys):
         cfg_path, _ = cli_config

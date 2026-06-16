@@ -16,7 +16,12 @@ from typing import Any
 
 from src.flow import run_flow as _run_flow
 from src.models import DELETABLE_STATUSES, TERMINAL_STATUSES, TaoError, TaskStatus
-from src.providers import ClaudeCliProvider, CopilotCliProvider, ProviderPool
+from src.providers import (
+    ClaudeCliProvider,
+    ClaudeInteractiveProvider,
+    CopilotCliProvider,
+    ProviderPool,
+)
 from src.queue import QueueManager
 from src.store import Store
 
@@ -26,6 +31,7 @@ DEFAULT_DB_PATH = ".tao/engine.db"
 
 _PROVIDER_TYPES: dict[str, type] = {
     "claude_cli": ClaudeCliProvider,
+    "claude_interactive": ClaudeInteractiveProvider,
     "copilot_cli": CopilotCliProvider,
 }
 
@@ -293,6 +299,31 @@ class Engine:
                 time.sleep(1.0)
         except KeyboardInterrupt:
             self._queue.shutdown()
+
+    def run_until_complete(self, poll_interval: float = 0.5) -> None:
+        """Start the queue, block until no task is still queued/running, then shut down.
+
+        This is the ``tao run`` lifecycle (submit → process → exit). Tasks that settle as
+        BLOCKED or STOPPED also release the wait — they need human action and will not
+        progress in an unattended run. For a server that stays up for new work, use
+        ``serve()`` instead.
+        """
+        self._queue.start()
+        logger.info("engine running tasks (max_concurrent=%d)", self._queue._max_concurrent)
+        active = {TaskStatus.QUEUED, TaskStatus.RUNNING}
+        try:
+            while True:
+                statuses = [TaskStatus(t["status"]) for t in self.list_tasks()]
+                if not any(s in active for s in statuses):
+                    break
+                time.sleep(poll_interval)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            self._queue.shutdown()
+        final = [TaskStatus(t["status"]) for t in self.list_tasks()]
+        done = sum(s in TERMINAL_STATUSES for s in final)
+        logger.info("all tasks settled: %d/%d terminal", done, len(final))
 
     # --- Lifecycle ---
 

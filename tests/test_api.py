@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import threading
+import time
 from unittest.mock import patch
 
 import pytest
+
 from src.api import Engine, _build_provider_pool, load_config
 from src.models import StoreError, TaoError, TaskNotFoundError, TaskStatus
 
@@ -353,3 +355,40 @@ class TestEngineServe:
         # Clean up: shutdown the queue so the serve loop exits
         engine._queue.shutdown()
         t.join(timeout=5.0)
+
+
+# ---------------------------------------------------------------------------
+# TestEngineRunUntilComplete — `tao run` lifecycle: drain then exit
+# ---------------------------------------------------------------------------
+
+
+class TestEngineRunUntilComplete:
+    @pytest.mark.timeout(10)
+    def test_returns_when_no_active_tasks(self, engine):
+        """No queued/running tasks → returns at once (would hang on regression)."""
+        with patch.object(engine._queue, "start"), patch.object(engine._queue, "shutdown"):
+            engine.run_until_complete(poll_interval=0.01)
+
+    @pytest.mark.timeout(10)
+    def test_waits_for_active_task_then_exits(self, engine):
+        """Blocks while a task is queued/running, returns once it settles terminal."""
+        engine.submit(1, "active task")  # starts QUEUED
+
+        def _settle():
+            time.sleep(0.2)
+            engine._store.update_task_status(1, TaskStatus.COMPLETED)
+
+        with patch.object(engine._queue, "start"), patch.object(engine._queue, "shutdown"):
+            settler = threading.Thread(target=_settle)
+            settler.start()
+            engine.run_until_complete(poll_interval=0.02)
+            settler.join(timeout=5.0)
+        assert engine.list_tasks()[0]["status"] == TaskStatus.COMPLETED
+
+    @pytest.mark.timeout(10)
+    def test_exits_on_blocked_task(self, engine):
+        """A BLOCKED task is not 'active' — it needs human action, so the run exits."""
+        engine.submit(1, "blocked task")
+        engine._store.update_task_status(1, TaskStatus.BLOCKED)
+        with patch.object(engine._queue, "start"), patch.object(engine._queue, "shutdown"):
+            engine.run_until_complete(poll_interval=0.01)

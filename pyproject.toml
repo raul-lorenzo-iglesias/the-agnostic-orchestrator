@@ -16,6 +16,11 @@ dev = [
     "ruff>=0.4.0",
     "pytest-timeout>=2.0",
 ]
+# Optional: enables the claude_interactive provider (drives the Claude TUI over a
+# ConPTY as a subscription fallback for `claude -p`). Windows only.
+interactive = [
+    "pywinpty>=2.0; sys_platform == 'win32'",
+]
 
 [project.scripts]
 tao = "src.cli:main"

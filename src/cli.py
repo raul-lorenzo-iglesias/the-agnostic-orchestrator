@@ -272,7 +272,12 @@ def _cmd_run(args: argparse.Namespace) -> None:
             task_id, title, body, config = _parse_task_file(file_path)
             assigned_id = engine.submit(task_id, title, body, config=config)
             print(f"submitted task {assigned_id}")
-        engine.serve()
+        # Process the submitted tasks and exit when none are still queued/running
+        # (matches the documented "exits when all tasks finish" behavior). For a
+        # long-running server, use `tao serve` instead.
+        engine.run_until_complete()
+        for task in engine.list_tasks():
+            print(f"task {task['task_id']}: {task['status']}")
 
 
 def _cmd_llm(args: argparse.Namespace) -> None:
